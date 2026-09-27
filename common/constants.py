@@ -1,0 +1,105 @@
+"""
+common/constants.py - Định nghĩa các hằng số dùng chung giữa Client và Server
+Đáp ứng đầy đủ 34 chức năng và CSDL MySQL trainbus theo đặc tả trong result.txt
+"""
+
+# ============================================================
+# CẤU HÌNH IP MÁY CHỦ - THAY ĐỔI Ở ĐÂY KHI DEPLOY
+# ============================================================
+SERVER_HOST = "127.0.0.1"   # <-- Sửa thành IP thực của máy chủ (VD: "192.168.1.100")
+SERVER_PORT = 8888           # <-- Sửa port nếu cần (mặc định: 8888)
+# ============================================================
+
+# Giữ lại để tương thích code cũ
+DEFAULT_HOST = SERVER_HOST
+DEFAULT_PORT = SERVER_PORT
+BUFFER_SIZE = 4096
+HEARTBEAT_INTERVAL = 30  # Giây gửi PING/PONG một lần
+RECONNECT_INTERVAL = 3   # Giây thử kết nối lại khi mất mạng
+
+# Cấu hình MySQL Workbench
+MYSQL_HOST = "127.0.0.1"
+MYSQL_PORT = 3306
+MYSQL_USER = "root"
+MYSQL_PASSWORD = "123456"
+MYSQL_DB = "trainbus"
+
+# Trạng thái ghế (Seat Status)
+SEAT_AVAILABLE = "AVAILABLE"    # Ghế trống - Có thể chọn (Màu xanh)
+SEAT_HOLDING = "HOLDING"        # Đang giữ chỗ tạm thời (Màu vàng/cam)
+SEAT_BOOKED = "BOOKED"          # Đã đặt / Đã thanh toán (Màu đỏ)
+
+# Phân quyền người dùng (4 roles chuẩn theo STT 7 trong result.txt)
+ROLE_CUSTOMER = "Customer"      # Khách hàng đặt vé
+ROLE_DRIVER = "Driver"          # Tài xế kiểm tra vé, check-in
+ROLE_STAFF = "Staff"            # Nhân viên hỗ trợ bán vé
+ROLE_ADMIN = "Admin"            # Quản trị viên toàn quyền hệ thống
+
+# Các loại Action (Client -> Server)
+ACTION_LOGIN = "LOGIN"
+ACTION_REGISTER = "REGISTER"
+ACTION_LOGOUT = "LOGOUT"
+ACTION_UPDATE_PROFILE = "UPDATE_PROFILE"
+ACTION_CHANGE_PASSWORD = "CHANGE_PASSWORD"
+ACTION_GET_PERSONAL_STATS = "GET_PERSONAL_STATS"
+
+ACTION_GET_TRIPS = "GET_TRIPS"
+ACTION_GET_SEATS = "GET_SEATS"
+ACTION_HOLD_SEATS = "HOLD_SEATS"
+ACTION_RELEASE_SEATS = "RELEASE_SEATS"
+ACTION_CONFIRM_BOOKING = "CONFIRM_BOOKING"
+ACTION_GET_MY_TICKETS = "GET_MY_TICKETS"
+ACTION_CANCEL_TICKET = "CANCEL_TICKET"
+ACTION_GET_VEHICLES = "GET_VEHICLES"
+ACTION_HEARTBEAT = "HEARTBEAT"
+
+# Action Quản trị & Điều khiển hệ thống (Admin/Staff)
+ACTION_ADMIN_ADD_TRIP = "ADMIN_ADD_TRIP"
+ACTION_ADMIN_GET_ALL_TICKETS = "ADMIN_GET_ALL_TICKETS"
+ACTION_ADMIN_GET_STATS = "ADMIN_GET_STATS"
+ACTION_ADMIN_GET_USERS = "ADMIN_GET_USERS"
+ACTION_ADMIN_UPDATE_USER = "ADMIN_UPDATE_USER"
+ACTION_ADMIN_ADD_VEHICLE = "ADMIN_ADD_VEHICLE"
+ACTION_ADMIN_UPDATE_VEHICLE = "ADMIN_UPDATE_VEHICLE"
+ACTION_ADMIN_DELETE_VEHICLE = "ADMIN_DELETE_VEHICLE"
+ACTION_ADMIN_GET_ONLINE_USERS = "ADMIN_GET_ONLINE_USERS"
+ACTION_ADMIN_SEND_NOTIFICATION = "ADMIN_SEND_NOTIFICATION"
+ACTION_ADMIN_GET_LOGS = "ADMIN_GET_LOGS"
+ACTION_ADMIN_BACKUP_DB = "ADMIN_BACKUP_DB"
+ACTION_ADMIN_RESTORE_DB = "ADMIN_RESTORE_DB"
+
+# Voice Call Actions (STT 25, 26)
+ACTION_VOICE_CALL_INITIATE = "VOICE_CALL_INITIATE"
+ACTION_VOICE_CALL_RESPONSE = "VOICE_CALL_RESPONSE"
+ACTION_VOICE_CALL_END = "VOICE_CALL_END"
+ACTION_VOICE_CALL_ANY = "VOICE_CALL_ANY"   # Gọi tới bất kỳ user online nào
+
+# Các sự kiện Broadcast từ Server (Server -> Clients)
+EVENT_SEAT_UPDATE = "SEAT_UPDATE"
+EVENT_NOTIFICATION = "NOTIFICATION"
+EVENT_USER_STATUS = "USER_STATUS"
+EVENT_VOICE_CALL_INCOMING = "VOICE_CALL_INCOMING"
+EVENT_VOICE_CALL_ACCEPTED = "VOICE_CALL_ACCEPTED"
+EVENT_VOICE_CALL_REJECTED = "VOICE_CALL_REJECTED"
+EVENT_VOICE_CALL_ENDED = "VOICE_CALL_ENDED"
+
+# Trạng thái phản hồi (Server -> Client)
+STATUS_SUCCESS = "SUCCESS"
+STATUS_ERROR = "ERROR"
+
+# Thời gian giữ chỗ tạm thời (giây) - Mặc định 180s (3 phút)
+HOLD_TIMEOUT_SECONDS = 180
+
+# Danh sách thành phố phổ biến
+POPULAR_CITIES = [
+    "Hà Nội",
+    "Hồ Chí Minh",
+    "Đà Nẵng",
+    "Đà Lạt",
+    "Nha Trang",
+    "Hải Phòng",
+    "Cần Thơ",
+    "Huế",
+    "Quy Nhơn",
+    "Vũng Tàu"
+]

@@ -1,0 +1,39 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+.Python
+env
+venv
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Project specific
+*.bat
+.env.local
+result.txt
+test_system.py
+node_modules
+package-lock.json

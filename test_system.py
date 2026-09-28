@@ -57,7 +57,7 @@ def run_e2e_test():
     client2 = NetworkClient()
     ok2, msg2 = client2.connect("127.0.0.1", 8889)
     assert ok2
-    resp_login2 = client2.login("admin", "admin123")
+    resp_login2 = client2.login("taixe", "123456")
     assert resp_login2.get("status") == "SUCCESS"
 
     broadcast_received = []

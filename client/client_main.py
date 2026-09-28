@@ -20,10 +20,6 @@ if PROJECT_ROOT not in sys.path:
 from client.network_client import NetworkClient
 from client.gui_login import LoginWindow
 from client.gui_booking import BookingWindow
-from client.gui_admin import CustomerCareWindow
-
-# Vai trò được mở giao diện Chăm Sóc Khách Hàng
-_CARE_ROLES = {"Admin", "Staff"}
 
 
 class ClientApplication:
@@ -43,39 +39,27 @@ class ClientApplication:
         )
 
     def _on_login_success(self, client):
-        """Callback sau khi đăng nhập thành công — phân nhánh theo vai trò."""
+        """Chỉ cho tài khoản khách hàng và tài xế dùng ứng dụng client."""
         role = (self.client.user_info or {}).get("role", "")
-        if role in _CARE_ROLES:
-            # Admin / Staff → mở giao diện Chăm Sóc Khách Hàng
-            self.show_customer_care()
-        else:
-            # Customer / Driver → mở giao diện đặt vé
-            self.show_booking(client)
+        if role not in {"Customer", "Driver"}:
+            try:
+                self.client.logout()
+            except Exception:
+                pass
+            messagebox.showerror(
+                "Không có quyền truy cập",
+                "Tài khoản quản trị/nhân viên chỉ được đăng nhập qua run_admin.py.",
+                parent=self.root,
+            )
+            self.show_login()
+            return
+        self.show_booking(client)
 
     def show_booking(self, client):
         self._clear_root()
         self.current_window = BookingWindow(
             self.root, self.client, on_logout=self.show_login
         )
-
-    def show_customer_care(self):
-        """Ẩn cửa sổ root, mở CustomerCareWindow như một cửa sổ độc lập."""
-        self._clear_root()
-        # Ẩn root (chỉ còn CustomerCareWindow hiển thị)
-        self.root.withdraw()
-        panel = CustomerCareWindow(
-            self.root, self.client,
-            on_close_callback=self._on_care_close
-        )
-        self.current_window = panel
-
-    def _on_care_close(self):
-        """Khi đóng Customer Care panel → đăng xuất và về màn hình login."""
-        try:
-            self.client.logout()
-        except Exception:
-            pass
-        self.show_login()
 
     def _clear_root(self):
         for widget in self.root.winfo_children():

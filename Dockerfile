@@ -3,30 +3,30 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Copy project files
 COPY . .
 
-# No external dependencies to install (Zero-dependency project)
-# Just verify the structure
+# Cài thư viện Python cần thiết
+RUN pip install --no-cache-dir PyMySQL
+
 RUN python -m py_compile run_server.py
+
 
 # Final stage
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy application from builder
 COPY --from=builder /app /app
 
-# Create data directory for SQLite database
+# Copy các package đã cài từ builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
 RUN mkdir -p /app/data
 
-# Expose server port
 EXPOSE 8888
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD python -c "import socket; s = socket.socket(); s.connect(('localhost', 8888)); s.close()" || exit 1
 
-# Run the server
 CMD ["python", "run_server.py"]

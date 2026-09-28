@@ -7,14 +7,32 @@ bằng kỹ thuật Length-Prefixed Framing (4-byte Big-Endian Length Prefix + U
 import json
 import struct
 import socket
+from datetime import datetime, date, time as dt_time
+
+
+class _SafeEncoder(json.JSONEncoder):
+    """JSON encoder tự động chuyển datetime/date/time thành chuỗi."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.strftime("%H:%M:%S %d/%m/%Y")
+        if isinstance(obj, date):
+            return obj.strftime("%d/%m/%Y")
+        if isinstance(obj, dt_time):
+            return obj.strftime("%H:%M:%S")
+        # bytes, bytearray → hex string
+        if isinstance(obj, (bytes, bytearray)):
+            return obj.hex()
+        return super().default(obj)
+
 
 def send_msg(sock: socket.socket, data: dict) -> bool:
     """
     Đóng gói dữ liệu thành JSON và gửi qua TCP Socket với tiền tố độ dài 4 byte.
     Format gói tin: [4 bytes độ dài (unsigned int)] + [Chuỗi JSON UTF-8]
+    Tự động chuyển datetime thành chuỗi để tránh JSONDecodeError.
     """
     try:
-        json_bytes = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        json_bytes = json.dumps(data, ensure_ascii=False, cls=_SafeEncoder).encode('utf-8')
         length = len(json_bytes)
         # struct.pack('!I', length): 4 bytes unsigned int theo chuẩn mạng Big-Endian
         header = struct.pack('!I', length)

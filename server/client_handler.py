@@ -220,6 +220,8 @@ class ClientHandler(threading.Thread):
         # --- ADMIN / QUẢN TRỊ HỆ THỐNG (STT 6, 7, 10, 20, 27, 28, 30, 31, 32, 33, 34) ---
         elif action == ACTION_ADMIN_GET_ONLINE_USERS:
             token = req.get("token") or self.token
+            if not bl.is_staff_or_admin(token):
+                return {"status": STATUS_ERROR, "message": "Từ chối truy cập!"}
             users = bl.get_online_users_list()
             return {"status": STATUS_SUCCESS, "online_users": users}
 
@@ -235,8 +237,14 @@ class ClientHandler(threading.Thread):
 
         elif action == ACTION_ADMIN_ADD_VEHICLE:
             token = req.get("token") or self.token
-            success, res = bl.handle_admin_add_vehicle(token, req.get("vehicle_data", {}))
-            return {"status": STATUS_SUCCESS if success else STATUS_ERROR, "message": "Thêm xe thành công!" if success else str(res)}
+            try:
+                success, res = bl.handle_admin_add_vehicle(token, req.get("vehicle_data", {}))
+                msg = "Thêm xe thành công!" if success else str(res)
+                print(f"[ADD_VEHICLE] success={success}, msg={msg}")
+                return {"status": STATUS_SUCCESS if success else STATUS_ERROR, "message": msg}
+            except Exception as e:
+                print(f"[ADD_VEHICLE ERROR] {e}")
+                return {"status": STATUS_ERROR, "message": f"Lỗi server khi thêm xe: {e}"}
 
         elif action == ACTION_ADMIN_UPDATE_VEHICLE:
             token = req.get("token") or self.token
@@ -255,6 +263,8 @@ class ClientHandler(threading.Thread):
 
         elif action == ACTION_ADMIN_ADD_TRIP:
             token = req.get("token") or self.token
+            if not bl.is_admin(token):
+                return {"status": STATUS_ERROR, "message": "Chỉ Admin mới có quyền tạo chuyến!"}
             success, msg_or_id = bl.db.admin_add_trip(
                 req["trip_data"]["bus_number"], req["trip_data"]["bus_type"],
                 req["trip_data"]["from_city"], req["trip_data"]["to_city"],
@@ -265,15 +275,26 @@ class ClientHandler(threading.Thread):
 
         elif action == ACTION_ADMIN_GET_ALL_TICKETS:
             token = req.get("token") or self.token
+            if not bl.is_staff_or_admin(token):
+                return {"status": STATUS_ERROR, "message": "Từ chối truy cập!"}
             return {"status": STATUS_SUCCESS, "tickets": db.admin_get_all_tickets()}
 
         elif action == ACTION_ADMIN_GET_STATS:
             token = req.get("token") or self.token
+            if not bl.is_staff_or_admin(token):
+                return {"status": STATUS_ERROR, "message": "Từ chối truy cập!"}
             return {"status": STATUS_SUCCESS, "stats": db.admin_get_stats()}
 
         elif action == ACTION_ADMIN_GET_LOGS:
             token = req.get("token") or self.token
-            return {"status": STATUS_SUCCESS, "logs": db.admin_get_logs(req.get("limit", 50))}
+            success, message, logs = bl.handle_admin_get_logs(
+                token, req.get("limit", 50)
+            )
+            return {
+                "status": STATUS_SUCCESS if success else STATUS_ERROR,
+                "message": message,
+                "logs": logs,
+            }
 
         elif action == ACTION_ADMIN_BACKUP_DB:
             token = req.get("token") or self.token

@@ -23,7 +23,6 @@ from common.constants import (
 )
 from common.qr_generator import draw_qr_on_canvas
 from client.gui_history import HistoryWindow
-from client.gui_admin import AdminWindow
 from client.gui_profile import ProfileWindow
 from client.voice_call import IncomingCallDialog, CallingDialog
 
@@ -131,9 +130,6 @@ class BookingWindow:
             return b
 
         nav_btn("🚪 Đăng xuất",      CLR_RED,     self._do_logout)
-
-        if role in (ROLE_ADMIN, ROLE_STAFF):
-            nav_btn("🛡️ Quản trị",   "#7C3AED",   self._open_admin)
 
         nav_btn("🎫 Vé của tôi",     "#0284C7",   self._open_history)
         nav_btn("📊 Tài khoản",      "#334155",   self._open_profile)
@@ -320,8 +316,23 @@ class BookingWindow:
         )
         self.lbl_price.pack(side=tk.RIGHT)
 
+        # Hàng nút hành động
+        row_btns = tk.Frame(self.bottom_bar, bg="#F8FAFC")
+        row_btns.pack(fill=tk.X, pady=(6, 0))
+
+        self.btn_reset = tk.Button(
+            row_btns,
+            text="🔄 Bỏ chọn",
+            bg="#64748B", fg="#FFFFFF",
+            font=("Segoe UI", 9, "bold"),
+            relief=tk.FLAT, pady=8, cursor="hand2",
+            state=tk.DISABLED,
+            command=self._reset_seat_selection
+        )
+        self.btn_reset.pack(side=tk.LEFT, padx=(0, 6))
+
         self.btn_hold_pay = tk.Button(
-            self.bottom_bar,
+            row_btns,
             text="🔒 Giữ Chỗ & Thanh Toán",
             bg="#059669", fg="#FFFFFF",
             font=("Segoe UI", 10, "bold"),
@@ -329,7 +340,7 @@ class BookingWindow:
             state=tk.DISABLED,
             command=self._on_hold_and_pay_clicked
         )
-        self.btn_hold_pay.pack(fill=tk.X, pady=(6, 0))
+        self.btn_hold_pay.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     # ══════════════════════════════════════════════════════════
     #  CHUYẾN XE
@@ -476,6 +487,7 @@ class BookingWindow:
             self.lbl_price.config(text="0 VNĐ")
             self.btn_hold_pay.config(state=tk.DISABLED,
                                      text="🔒 Giữ Chỗ & Thanh Toán")
+            self.btn_reset.config(state=tk.DISABLED)
         else:
             self.lbl_selected.config(
                 text=f"Ghế: {', '.join(sel)}  ({count} ghế)")
@@ -491,15 +503,135 @@ class BookingWindow:
             self.btn_hold_pay.config(
                 state=tk.NORMAL,
                 text=f"🔒 Giữ {count} ghế & Thanh Toán")
+            self.btn_reset.config(state=tk.NORMAL)
 
     # ══════════════════════════════════════════════════════════
     #  GIỮ CHỖ & THANH TOÁN
     # ══════════════════════════════════════════════════════════
+    def _reset_seat_selection(self):
+        """Bỏ chọn tất cả ghế đang được chọn (màu xanh dương)."""
+        for sn in list(self.my_selected_seats):
+            self._apply_seat_style(sn, self.trip_seats.get(sn, SEAT_AVAILABLE))
+        self.my_selected_seats.clear()
+        self._update_summary()
+
     def _on_hold_and_pay_clicked(self):
         if not self.my_selected_seats or not self.current_trip:
             return
+
         seats = sorted(self.my_selected_seats)
-        resp  = self.client.hold_seats(self.current_trip, seats)
+
+        # ── Lấy thông tin chuyến để hiển thị trong confirm ──
+        vals      = self.tree_trips.item(str(self.current_trip)).get("values", [])
+        route     = vals[1] if len(vals) > 1 else f"Chuyến #{self.current_trip}"
+        dep_time  = vals[3] if len(vals) > 3 else ""
+        price_str = vals[4] if len(vals) > 4 else "0 đ"
+        raw_price = 0
+        try:
+            raw_price = int(str(price_str)
+                            .replace(" đ","").replace(".","")
+                            .replace(",","").strip())
+        except ValueError:
+            pass
+        total = raw_price * len(seats)
+
+        # ── Dialog xác nhận ──────────────────────────────────
+        confirm = tk.Toplevel(self.root)
+        confirm.title("Xác nhận đặt vé")
+        confirm.resizable(False, False)
+        confirm.configure(bg="#F8FAFC")
+        confirm.grab_set()
+        confirm.focus_force()
+
+        # Dùng grid cho root frame để đảm bảo nút luôn hiển thị
+        confirm.grid_rowconfigure(1, weight=1)
+        confirm.grid_columnconfigure(0, weight=1)
+
+        # Header
+        hdr = tk.Frame(confirm, bg="#064E3B")
+        hdr.grid(row=0, column=0, sticky="ew")
+        tk.Frame(hdr, bg="#059669", height=5).pack(fill=tk.X)
+        tk.Label(
+            hdr,
+            text="🎫  XÁC NHẬN ĐẶT VÉ",
+            font=("Segoe UI", 13, "bold"), fg="#ECFDF5", bg="#064E3B",
+            pady=12
+        ).pack()
+
+        # Body — thông tin tóm tắt
+        info_frame = tk.Frame(confirm, bg="#F8FAFC", padx=28, pady=14)
+        info_frame.grid(row=1, column=0, sticky="nsew")
+
+        def info_row(label, value, value_fg="#1E293B"):
+            row = tk.Frame(info_frame, bg="#F8FAFC")
+            row.pack(fill=tk.X, pady=4)
+            tk.Label(row, text=label, font=("Segoe UI", 9),
+                     fg="#64748B", bg="#F8FAFC", width=16, anchor=tk.W
+                     ).pack(side=tk.LEFT)
+            tk.Label(row, text=value, font=("Segoe UI", 9, "bold"),
+                     fg=value_fg, bg="#F8FAFC", anchor=tk.W
+                     ).pack(side=tk.LEFT)
+
+        info_row("Tuyến xe:",       route)
+        info_row("Giờ khởi hành:",  dep_time)
+        info_row("Ghế đã chọn:",    ", ".join(seats), value_fg="#2563EB")
+        info_row("Số ghế:",         f"{len(seats)} ghế")
+        info_row("Tổng tiền:",
+                 f"{total:,} VNĐ".replace(",", "."),
+                 value_fg="#DC2626")
+
+        tk.Frame(info_frame, bg="#E2E8F0", height=1).pack(fill=tk.X, pady=(10, 0))
+        tk.Label(
+            info_frame,
+            text="⚡ Sau khi xác nhận, ghế sẽ được giữ trong 3 phút để bạn hoàn tất thanh toán.",
+            font=("Segoe UI", 8), fg="#92400E", bg="#FEF3C7",
+            wraplength=360, justify=tk.LEFT, padx=10, pady=7
+        ).pack(fill=tk.X, pady=(8, 0))
+
+        # Footer nút — grid row=2, KHÔNG dùng expand nên không bị che
+        btn_row = tk.Frame(confirm, bg="#E2E8F0", padx=20, pady=12)
+        btn_row.grid(row=2, column=0, sticky="ew")
+
+        def on_confirm():
+            confirm.destroy()
+            self._do_hold_and_open_payment(seats)
+
+        def on_cancel():
+            confirm.destroy()
+
+        tk.Button(
+            btn_row,
+            text="✅  OK — Giữ chỗ & Thanh toán",
+            bg="#059669", fg="#FFFFFF",
+            font=("Segoe UI", 10, "bold"), relief=tk.FLAT,
+            pady=9, cursor="hand2", command=on_confirm
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+
+        tk.Button(
+            btn_row,
+            text="✕  Huỷ",
+            bg="#64748B", fg="#FFFFFF",
+            font=("Segoe UI", 10, "bold"), relief=tk.FLAT,
+            pady=9, cursor="hand2", command=on_cancel
+        ).pack(side=tk.RIGHT, padx=(0, 0))
+
+        # Tự động căn kích thước sau khi build xong
+        confirm.update_idletasks()
+        w = confirm.winfo_reqwidth()
+        h = confirm.winfo_reqheight()
+        # Căn giữa màn hình
+        sw = confirm.winfo_screenwidth()
+        sh = confirm.winfo_screenheight()
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        confirm.geometry(f"{w}x{h}+{x}+{y}")
+
+        confirm.bind("<Return>",  lambda e: on_confirm())
+        confirm.bind("<Escape>",  lambda e: on_cancel())
+
+    def _do_hold_and_open_payment(self, seats: list):
+        """Gọi server giữ chỗ sau khi user đã xác nhận."""
+        resp = self.client.hold_seats(self.current_trip, seats)
         if resp.get("status") == "SUCCESS":
             self.is_holding     = True
             self.held_seats     = seats
@@ -508,8 +640,10 @@ class BookingWindow:
             self._start_countdown()
             self._open_payment_dialog(seats)
         else:
-            messagebox.showerror("Giữ chỗ thất bại",
-                                 resp.get("message", "Ghế đã có người chọn trước!"))
+            messagebox.showerror(
+                "Giữ chỗ thất bại",
+                resp.get("message", "Ghế đã có người chọn trước!\nVui lòng chọn ghế khác.")
+            )
             self._refresh_seats()
 
     def _start_countdown(self):
@@ -928,42 +1062,86 @@ class BookingWindow:
     def _open_history(self):
         HistoryWindow(self.root, self.client)
 
-    def _open_admin(self):
-        AdminWindow(self.root, self.client)
-
     def _open_profile(self):
         ProfileWindow(self.root, self.client)
 
     def _open_vehicles_view(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("🚍  Đội xe TrainBus")
-        dlg.geometry("760x440")
+        dlg.geometry("780x500")
         dlg.configure(bg="#F8FAFC")
 
+        # Header
         tk.Frame(dlg, bg=CLR_ACCENT, height=4).pack(fill=tk.X)
-        tk.Label(dlg, text="DANH SÁCH ĐỘI XE KHÁCH TRAINBUS",
+        hdr = tk.Frame(dlg, bg="#0F172A")
+        hdr.pack(fill=tk.X)
+        tk.Label(hdr, text="DANH SÁCH ĐỘI XE KHÁCH TRAINBUS",
                  font=("Segoe UI", 12, "bold"), fg=CLR_ACCENT,
-                 bg="#0F172A", pady=10).pack(fill=tk.X)
+                 bg="#0F172A", pady=10).pack(side=tk.LEFT, padx=16)
 
+        # Nút Load lại + label trạng thái
+        lbl_status = tk.Label(hdr, text="", font=("Segoe UI", 8),
+                              fg=CLR_MUTED, bg="#0F172A")
+        lbl_status.pack(side=tk.RIGHT, padx=(0, 8))
+
+        btn_reload = tk.Button(
+            hdr, text="🔄 Tải lại",
+            bg="#334155", fg="#FFFFFF",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT,
+            padx=10, pady=5, cursor="hand2"
+        )
+        btn_reload.pack(side=tk.RIGHT, padx=(0, 6), pady=8)
+
+        # Treeview
         cols = ("id","number","type","seats","driver","phone","status")
         tree = ttk.Treeview(dlg, columns=cols, show="headings")
-        for c, t, w in [("id","ID",40),("number","Biển số",105),
-                         ("type","Loại xe",155),("seats","Chỗ",55),
-                         ("driver","Tài xế",140),("phone","SĐT",110),
+        for c, t, w in [("id","ID",40),("number","Biển số",110),
+                         ("type","Loại xe",175),("seats","Chỗ",55),
+                         ("driver","Tài xế",145),("phone","SĐT",115),
                          ("status","Trạng thái",95)]:
             tree.heading(c, text=t)
             tree.column(c, width=w,
                         anchor=tk.CENTER if c in ("id","seats","status") else tk.W)
-        tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        resp = self.client.get_vehicles()
-        if resp.get("status") == "SUCCESS":
-            for v in resp.get("vehicles", []):
-                tree.insert("", tk.END, values=(
-                    v["id"], v["bus_number"], v["bus_type"],
-                    v["total_seats"], v.get("driver_name",""),
-                    v.get("phone",""), v.get("status","ACTIVE")
-                ))
+        sb_v = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=sb_v.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 0), pady=12)
+        sb_v.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=12)
+
+        def load_vehicles():
+            btn_reload.config(state=tk.DISABLED, text="⏳ Đang tải...")
+            lbl_status.config(text="")
+
+            def fetch():
+                resp = self.client.get_vehicles()
+                dlg.after(0, lambda: apply_vehicles(resp))
+
+            def apply_vehicles(resp):
+                btn_reload.config(state=tk.NORMAL, text="🔄 Tải lại")
+                tree.delete(*tree.get_children())
+                vehicles = resp.get("vehicles", [])
+                if resp.get("status") != "SUCCESS" or not vehicles:
+                    lbl_status.config(
+                        text=resp.get("message", "Chưa có dữ liệu"),
+                        fg=CLR_RED
+                    )
+                    return
+                for v in vehicles:
+                    tree.insert("", tk.END, values=(
+                        v["id"], v["bus_number"], v["bus_type"],
+                        v["total_seats"], v.get("driver_name", ""),
+                        v.get("phone", ""), v.get("status", "ACTIVE")
+                    ))
+                lbl_status.config(
+                    text=f"{len(vehicles)} xe  •  cập nhật lúc vừa xong",
+                    fg=CLR_MUTED
+                )
+
+            import threading as _t
+            _t.Thread(target=fetch, daemon=True).start()
+
+        btn_reload.config(command=load_vehicles)
+        load_vehicles()  # tự động load ngay khi mở
 
     def _do_logout(self):
         if not messagebox.askyesno("Đăng xuất",

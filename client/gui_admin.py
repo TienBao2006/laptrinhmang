@@ -209,6 +209,10 @@ class CustomerCareWindow(tk.Toplevel):
         sy.pack(side=tk.RIGHT, fill=tk.Y)
 
     def _load_dashboard(self):
+        # Reset KPI về trạng thái đang tải
+        for attr in ("kpi_revenue", "kpi_tickets", "kpi_trips", "kpi_users"):
+            getattr(self, attr).val_lbl.config(text="⏳ ...")
+
         def fetch():
             r_stats   = self.client.admin_get_stats()
             r_tickets = self.client.admin_get_all_tickets()
@@ -224,12 +228,16 @@ class CustomerCareWindow(tk.Toplevel):
             self.kpi_tickets.val_lbl.config(text=f"{s.get('tickets_count', 0)} vé")
             self.kpi_trips.val_lbl.config(text=f"{s.get('trips_count', 0)} chuyến")
             self.kpi_users.val_lbl.config(text=f"{s.get('users_count', 0)} người")
+        else:
+            err = r_stats.get("message", "Không kết nối được server")
+            for attr in ("kpi_revenue", "kpi_tickets", "kpi_trips", "kpi_users"):
+                getattr(self, attr).val_lbl.config(text=f"⚠️ {err}")
 
+        self.tree_dash.delete(*self.tree_dash.get_children())
         if r_tickets.get("status") == "SUCCESS":
-            self.tree_dash.delete(*self.tree_dash.get_children())
             # Chỉ hiển thị 100 vé gần nhất trên dashboard
             for t in list(reversed(r_tickets.get("tickets", [])))[:100]:
-                route = f"{t.get('from_city')} ➔ {t.get('to_city')}"
+                route = f"{t.get('from_city','?')} ➔ {t.get('to_city','?')}"
                 price_str = f"{t.get('total_amount', 0):,} VNĐ".replace(",", ".")
                 status_txt = "✅ ĐÃ ĐẶT" if t.get("status") == "CONFIRMED" else "❌ ĐÃ HỦY"
                 self.tree_dash.insert("", tk.END, values=(
@@ -238,6 +246,11 @@ class CustomerCareWindow(tk.Toplevel):
                     t.get("seats"), price_str,
                     t.get("booking_time"), status_txt,
                 ))
+        else:
+            self.tree_dash.insert("", tk.END, values=(
+                "—", f"⚠️ {r_tickets.get('message','Chưa kết nối server')}",
+                "", "", "", "", "", ""
+            ))
 
     # ══════════════════════════════════════════════════════════
     #  TAB 2: KHÁCH HÀNG
@@ -331,8 +344,13 @@ class CustomerCareWindow(tk.Toplevel):
             ).pack(fill=tk.X, pady=(16, 0))
 
         self._all_users_data = []
+        self._users_loaded = False
 
     def _load_users(self):
+        self._users_loaded = False
+        self.tree_users.delete(*self.tree_users.get_children())
+        self.tree_users.insert("", tk.END, values=("...", "⏳ Đang tải...", "", "", "", "", "", ""))
+
         def fetch():
             r = self.client.admin_get_users()
             self.after(0, lambda: self._apply_users(r))
@@ -340,6 +358,14 @@ class CustomerCareWindow(tk.Toplevel):
 
     def _apply_users(self, resp):
         self._all_users_data = resp.get("users", [])
+        self._users_loaded = True
+
+        self.tree_users.delete(*self.tree_users.get_children())
+        if resp.get("status") == "ERROR":
+            self.tree_users.insert("", tk.END, values=(
+                "—", f"⚠️ {resp.get('message','Lỗi kết nối')}", "", "", "", "", "", ""
+            ))
+            return
         self._render_users(self._all_users_data)
 
     def _render_users(self, users):
@@ -354,15 +380,24 @@ class CustomerCareWindow(tk.Toplevel):
 
     def _filter_users(self):
         keyword = self.ent_user_search.get().strip().lower()
+
+        # Dùng flag _users_loaded thay vì kiểm tra list rỗng
+        if not getattr(self, "_users_loaded", False):
+            self._load_users()
+            return
+
         if not keyword:
             self._render_users(self._all_users_data)
             return
+
+        def _s(v):
+            return str(v).lower() if v is not None else ""
         filtered = [
             u for u in self._all_users_data
-            if keyword in str(u.get("username","")).lower()
-            or keyword in str(u.get("fullname","")).lower()
-            or keyword in str(u.get("phone","")).lower()
-            or keyword in str(u.get("email","")).lower()
+            if keyword in _s(u.get("username"))
+            or keyword in _s(u.get("fullname"))
+            or keyword in _s(u.get("phone"))
+            or keyword in _s(u.get("email"))
         ]
         self._render_users(filtered)
 
@@ -456,8 +491,13 @@ class CustomerCareWindow(tk.Toplevel):
         sy.pack(side=tk.RIGHT, fill=tk.Y)
 
         self._all_tickets_data = []
+        self._tickets_loaded = False
 
     def _load_all_tickets(self):
+        self._tickets_loaded = False
+        self.tree_tickets.delete(*self.tree_tickets.get_children())
+        self.tree_tickets.insert("", tk.END, values=("...", "⏳ Đang tải...", "", "", "", "", "", "", ""))
+
         def fetch():
             r = self.client.admin_get_all_tickets()
             self.after(0, lambda: self._apply_tickets(r))
@@ -465,9 +505,23 @@ class CustomerCareWindow(tk.Toplevel):
 
     def _apply_tickets(self, resp):
         self._all_tickets_data = resp.get("tickets", [])
+        self._tickets_loaded = True  # đánh dấu đã load xong dù rỗng hay có data
+
+        self.tree_tickets.delete(*self.tree_tickets.get_children())
+
+        if resp.get("status") == "ERROR":
+            self.tree_tickets.insert("", tk.END, values=(
+                "—", f"⚠️ {resp.get('message','Lỗi kết nối')}", "", "", "", "", "", "", ""
+            ))
+            return
         self._filter_tickets()
 
     def _filter_tickets(self):
+        # Nếu chưa load lần nào thì load trước (không loop vì dùng flag riêng)
+        if not getattr(self, "_tickets_loaded", False):
+            self._load_all_tickets()
+            return
+
         keyword = self.ent_ticket_search.get().strip().lower()
         status_filter = self.cb_ticket_status.get()
 
@@ -475,24 +529,47 @@ class CustomerCareWindow(tk.Toplevel):
         if status_filter != "Tất cả":
             result = [t for t in result if t.get("status") == status_filter]
         if keyword:
+            def _s(v):
+                return str(v).lower() if v is not None else ""
             result = [
                 t for t in result
-                if keyword in str(t.get("booking_code","")).lower()
-                or keyword in str(t.get("username","")).lower()
-                or keyword in str(t.get("passenger_name","")).lower()
-                or keyword in str(t.get("passenger_phone","")).lower()
+                if keyword in _s(t.get("booking_code"))
+                or keyword in _s(t.get("username"))
+                or keyword in _s(t.get("passenger_name"))
+                or keyword in _s(t.get("passenger_phone"))
+                or keyword in _s(t.get("from_city"))
+                or keyword in _s(t.get("to_city"))
             ]
 
         self.tree_tickets.delete(*self.tree_tickets.get_children())
+
+        if not result:
+            # Hiện thông báo rõ ràng thay vì để trống
+            if not self._all_tickets_data:
+                msg = "Chưa có vé nào được đặt trong hệ thống."
+            elif keyword or status_filter != "Tất cả":
+                msg = "Không tìm thấy vé khớp với điều kiện tìm kiếm."
+            else:
+                msg = "Chưa có dữ liệu."
+            self.tree_tickets.insert("", tk.END, values=(
+                "—", f"ℹ️  {msg}", "", "", "", "", "", "", ""
+            ))
+            return
+
         for t in result:
-            route = f"{t.get('from_city')} ➔ {t.get('to_city')}"
-            price_str = f"{t.get('total_amount', 0):,} VNĐ".replace(",", ".")
+            def _sv(v):
+                return str(v) if v is not None else ""
+            route = f"{_sv(t.get('from_city'))} ➔ {_sv(t.get('to_city'))}"
+            try:
+                price_str = f"{int(t.get('total_amount', 0)):,} VNĐ".replace(",", ".")
+            except (ValueError, TypeError):
+                price_str = "0 VNĐ"
             st_txt = "✅ ĐÃ ĐẶT" if t.get("status") == "CONFIRMED" else "❌ ĐÃ HỦY"
             self.tree_tickets.insert("", tk.END, values=(
-                t.get("booking_code"), t.get("username"),
-                t.get("passenger_name"), t.get("passenger_phone"),
-                route, t.get("seats"), price_str,
-                t.get("booking_time"), st_txt,
+                _sv(t.get("booking_code")), _sv(t.get("username")),
+                _sv(t.get("passenger_name")), _sv(t.get("passenger_phone")),
+                route, _sv(t.get("seats")), price_str,
+                _sv(t.get("booking_time")), st_txt,
             ))
 
     # ══════════════════════════════════════════════════════════
@@ -562,6 +639,9 @@ class CustomerCareWindow(tk.Toplevel):
         ).pack(fill=tk.X)
 
     def _load_online_users(self):
+        self.tree_online.delete(*self.tree_online.get_children())
+        self.tree_online.insert("", tk.END, values=("⏳ Đang tải...", "", "", ""))
+
         def fetch():
             r = self.client.admin_get_online_users()
             self.after(0, lambda: self._apply_online(r))
@@ -874,6 +954,10 @@ class CustomerCareWindow(tk.Toplevel):
         sy.pack(side=tk.RIGHT, fill=tk.Y)
 
     def _load_vehicles(self):
+        # Hiện trạng thái đang tải
+        self.tree_vehicles.delete(*self.tree_vehicles.get_children())
+        self.tree_vehicles.insert("", tk.END, values=("...", "⏳ Đang tải dữ liệu...", "", "", "", "", ""))
+
         def fetch():
             r = self.client.get_vehicles()
             self.after(0, lambda: self._apply_vehicles(r))
@@ -881,7 +965,16 @@ class CustomerCareWindow(tk.Toplevel):
 
     def _apply_vehicles(self, resp):
         self.tree_vehicles.delete(*self.tree_vehicles.get_children())
-        for v in resp.get("vehicles", []):
+        vehicles = resp.get("vehicles", [])
+        if not vehicles:
+            # Hiển thị dòng placeholder để user biết đang rỗng hay lỗi
+            status_msg = resp.get("message", "")
+            if resp.get("status") == "ERROR":
+                self.tree_vehicles.insert("", tk.END, values=(
+                    "—", "⚠️ Lỗi kết nối / chưa đăng nhập", status_msg, "", "", "", ""
+                ))
+            return
+        for v in vehicles:
             self.tree_vehicles.insert("", tk.END, values=(
                 v.get("id"), v.get("bus_number"), v.get("bus_type"),
                 v.get("total_seats"), v.get("driver_name", ""),
@@ -938,21 +1031,33 @@ class CustomerCareWindow(tk.Toplevel):
                 messagebox.showwarning("Thiếu thông tin",
                                        "Biển số và Loại xe là bắt buộc!", parent=dlg)
                 return
-            resp = self.client.admin_add_vehicle(v_data)
-            if resp.get("status") == "SUCCESS":
-                messagebox.showinfo("Thành công", "Đã thêm xe!", parent=dlg)
-                dlg.destroy()
-                self._load_vehicles()
-            else:
-                messagebox.showerror("Lỗi", resp.get("message", "Không thêm được!"),
-                                     parent=dlg)
 
-        tk.Button(
+            btn_add.config(state="disabled", text="⏳ Đang thêm...")
+
+            def send():
+                resp = self.client.admin_add_vehicle(v_data)
+                self.after(0, lambda: on_result(resp))
+
+            def on_result(resp):
+                btn_add.config(state="normal", text="✅ Thêm xe")
+                if resp.get("status") == "SUCCESS":
+                    messagebox.showinfo("Thành công", "Đã thêm xe!", parent=dlg)
+                    dlg.destroy()
+                    self._load_vehicles()
+                else:
+                    messagebox.showerror("Lỗi",
+                        resp.get("message", "Không thêm được! Kiểm tra biển số có bị trùng không."),
+                        parent=dlg)
+
+            threading.Thread(target=send, daemon=True).start()
+
+        btn_add = tk.Button(
             dlg, text="✅ Thêm xe",
             bg=CLR_GREEN, fg="#FFFFFF",
             font=("Segoe UI", 10, "bold"), relief=tk.FLAT,
             pady=8, cursor="hand2", command=do_add
-        ).pack(fill=tk.X, padx=24, pady=(16, 0))
+        )
+        btn_add.pack(fill=tk.X, padx=24, pady=(16, 0))
 
     def _delete_vehicle(self):
         sel = self.tree_vehicles.selection()
@@ -1029,6 +1134,9 @@ class CustomerCareWindow(tk.Toplevel):
         except ValueError:
             limit = 100
 
+        self.tree_logs.delete(*self.tree_logs.get_children())
+        self.tree_logs.insert("", tk.END, values=("...", "⏳ Đang tải...", "", "", "", ""))
+
         def fetch():
             r = self.client.admin_get_logs(limit)
             self.after(0, lambda: self._apply_logs(r))
@@ -1036,6 +1144,11 @@ class CustomerCareWindow(tk.Toplevel):
 
     def _apply_logs(self, resp):
         self.tree_logs.delete(*self.tree_logs.get_children())
+        if resp.get("status") == "ERROR":
+            self.tree_logs.insert("", tk.END, values=(
+                "—", "ERROR", "—", f"⚠️ {resp.get('message','Lỗi kết nối')}", "", ""
+            ))
+            return
         for log in resp.get("logs", []):
             self.tree_logs.insert("", tk.END, values=(
                 log.get("id"), log.get("log_level", ""),
@@ -1062,7 +1175,9 @@ class CustomerCareWindow(tk.Toplevel):
         """Tải dữ liệu khi người dùng chuyển tab."""
         nb = event.widget
         idx = nb.index(nb.select())
-        if idx == 1:
+        if idx == 0:
+            self._load_dashboard()
+        elif idx == 1:
             self._load_users()
         elif idx == 2:
             self._load_all_tickets()
@@ -1072,18 +1187,24 @@ class CustomerCareWindow(tk.Toplevel):
             self._load_vehicles()
         elif idx == 7:
             self._load_logs()
-        # Tab 0 (Dashboard), 4 (Notify), 5 (Add trip) không cần tải động
+        # Tab 4 (Thông Báo), 5 (Thêm Chuyến) không cần tải động
 
     def _refresh_all(self):
-        """Làm mới toàn bộ dữ liệu trên tab hiện tại."""
-        if hasattr(self, "_notebook"):
-            idx = self._notebook.index(self._notebook.select())
-            # Fake a tab change event
-            class _E:
-                widget = self._notebook
-            self._on_tab_changed(_E())
-            if idx == 0:
-                self._load_dashboard()
+        """Làm mới dữ liệu trên tab hiện tại."""
+        if not hasattr(self, "_notebook"):
+            return
+        idx = self._notebook.index(self._notebook.select())
+        dispatch = {
+            0: self._load_dashboard,
+            1: self._load_users,
+            2: self._load_all_tickets,
+            3: self._load_online_users,
+            6: self._load_vehicles,
+            7: self._load_logs,
+        }
+        fn = dispatch.get(idx)
+        if fn:
+            fn()
 
     def _on_close(self):
         if self.on_close_callback:

@@ -13,7 +13,7 @@ Hệ thống mô phỏng nền tảng đặt vé xe khách trực tuyến đa tr
 - **Đồng bộ hóa Thời gian thực (Real-time Broadcast Socket):** Khi bất kỳ client nào chọn giữ chỗ, thanh toán hoặc hủy vé, Server lập tức phát sóng sự kiện `SEAT_UPDATE` tới tất cả các Client khác đang cùng mở xem chuyến xe đó để đổi màu ghế tức thời.
 - **Cơ chế Giữ chỗ tạm thời có đếm ngược (Seat Holding & Countdown Timer):** Khi khách hàng chọn ghế và tiến hành thanh toán, ghế chuyển sang trạng thái `HOLDING` trong 180 giây. Nếu khách không thanh toán hoặc ngắt kết nối đột ngột, tiến trình chạy nền `SeatTimerWorker` sẽ tự động hoàn trả ghế về `AVAILABLE`.
 - **Thanh toán VietQR & Mã QR Check-in vé xe:** Sinh mã VietQR NAPAS 247 và mã QR xác thực vé điện tử thuần Python (Zero-dependency, không cần cài thư viện bên ngoài).
-- **Phân quyền người dùng:** Tài khoản khách hàng (`USER`) và tài khoản quản trị (`ADMIN`).
+- **Phân quyền người dùng:** Khách hàng/tài xế dùng `run_client.py`; Admin/Staff dùng giao diện quản trị riêng qua `run_admin.py` trên máy server hoặc máy quản trị.
 
 ---
 
@@ -42,12 +42,13 @@ DA/
 │   ├── gui_login.py          # Giao diện Đăng nhập / Đăng ký & Cấu hình IP/Port
 │   ├── gui_booking.py        # Giao diện Tìm kiếm, Sơ đồ ghế trực quan & Thanh toán
 │   ├── gui_history.py        # Giao diện Xem vé đã đặt & QR code check-in
-│   └── gui_admin.py          # Giao diện Admin quản trị chuyến xe & thống kê doanh thu
+│   └── gui_admin.py          # Giao diện quản trị, chỉ mở bằng run_admin.py
 │
 ├── data/
 │   └── bus_booking.db        # File CSDL SQLite (tự động khởi tạo khi chạy server)
 │
 ├── run_server.py             # Script khởi động nhanh Server
+├── run_admin.py              # Script khởi động giao diện quản trị
 ├── run_client.py             # Script khởi động nhanh Client
 ├── chay_server.bat           # File thực thi Windows khởi động Server
 ├── chay_client.bat           # File thực thi Windows khởi động Client
@@ -100,6 +101,13 @@ python run_client.py
 ```
 *Hoặc nháy đúp vào file `chay_client.bat` trên Windows.*
 
+### 4. Mở giao diện quản trị
+Trên máy server hoặc máy quản trị, mở một cửa sổ Terminal khác và chạy:
+```bash
+python run_admin.py
+```
+Admin/Staff đăng nhập tại giao diện này; ứng dụng `run_client.py` chỉ dành cho khách hàng/tài xế.
+
 ---
 
 ## V. CÁCH KIỂM THỬ TÍNH NĂNG ĐỒ ÁN (DEMO SCENARIOS)
@@ -124,7 +132,7 @@ python run_client.py
 5. Thử bấm **"❌ Hủy Vé Này"** -> Ghế trên sơ đồ lập tức được giải phóng tức thì.
 
 ### Kịch bản 4: Kiểm thử Phân quyền Quản trị (Admin Panel)
-1. Đăng nhập bằng tài khoản `admin` / `admin123`.
-2. Bấm nút **"🛡️ Quản Trị Admin"** trên thanh điều hướng.
+1. Mở `run_admin.py` trên máy server hoặc máy quản trị.
+2. Đăng nhập bằng tài khoản `admin` / `admin123`.
 3. Xem biểu đồ thống kê: Tổng doanh thu, Tổng số vé bán, Danh sách chi tiết vé toàn bộ khách hàng.
 4. Chuyển sang tab **"➕ Mở Thêm Chuyến Xe Mới"** để tạo chuyến xe mới, sơ đồ ghế sẽ được tự động khởi tạo vào hệ thống CSDL.

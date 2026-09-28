@@ -60,6 +60,12 @@ def run_e2e_test():
     resp_login2 = client2.login("taixe", "123456")
     assert resp_login2.get("status") == "SUCCESS"
 
+    admin_client = NetworkClient()
+    ok_admin, msg_admin = admin_client.connect("127.0.0.1", 8889)
+    assert ok_admin, f"Admin không thể kết nối: {msg_admin}"
+    resp_admin_login = admin_client.login("admin", "admin123")
+    assert resp_admin_login.get("status") == "SUCCESS"
+
     broadcast_received = []
     def on_broadcast(t_id, updated_seats):
         broadcast_received.append((t_id, updated_seats))
@@ -125,7 +131,7 @@ def run_e2e_test():
     print(f"[PASS] Test 10: Tra cứu lịch sử vé cá nhân thành công ({len(my_tks)} vé).")
 
     # 10. Kiểm thử Admin xem thống kê
-    resp_stats = client2.admin_get_stats()
+    resp_stats = admin_client.admin_get_stats()
     assert resp_stats.get("status") == "SUCCESS"
     stats = resp_stats.get("stats", {})
     assert stats.get("tickets_count", 0) >= 1
@@ -134,6 +140,7 @@ def run_e2e_test():
     # Dọn dẹp
     client1.disconnect()
     client2.disconnect()
+    admin_client.disconnect()
     server.stop()
     print("=" * 60)
     print("TẤT CẢ 11 BÀI KIỂM THỬ ĐỀU ĐẠT CHUẨN XUẤT SẮC 100%!")

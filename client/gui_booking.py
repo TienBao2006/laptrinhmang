@@ -53,7 +53,8 @@ class BookingWindow:
 
         self.root.title("TrainBus — Hệ Thống Đặt Vé Xe Khách")
         self.root.geometry("1240x800")
-        self.root.minsize(1050, 680)
+        self.root.minsize(860, 560)      # cho phép kéo nhỏ hợp lý
+        self.root.resizable(True, True)  # đảm bảo kéo to nhỏ được
         self.root.configure(bg=CLR_BG)
 
         # Trạng thái ghế
@@ -62,6 +63,7 @@ class BookingWindow:
         self.my_selected_seats = set()
         self.held_seats        = []
         self.is_holding        = False
+        self.hold_request_pending = False
         self.hold_time_left    = 0
         self.timer_job         = None
         self.seat_buttons      = {}
@@ -140,14 +142,24 @@ class BookingWindow:
             "📞 Gọi hỗ trợ", "#B45309", self._open_call_dialog
         )
 
-    # ── Layout 2 cột ─────────────────────────────────────────
+    # ── Layout 2 cột có thể kéo chia lại ────────────────────
     def _build_main_content(self):
         main = tk.Frame(self.root, bg=CLR_BG, padx=10, pady=8)
         main.pack(fill=tk.BOTH, expand=True)
 
+        # PanedWindow cho phép kéo thanh giữa để thay đổi tỉ lệ 2 cột
+        paned = tk.PanedWindow(
+            main, orient=tk.HORIZONTAL,
+            bg="#CBD5E1",        # màu thanh kéo
+            sashwidth=5,         # độ rộng thanh kéo
+            sashrelief=tk.FLAT,
+            handlesize=8
+        )
+        paned.pack(fill=tk.BOTH, expand=True)
+
         # ── Cột trái ─────────────────────────────────────────
-        left = tk.Frame(main, bg=CLR_BG)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+        left = tk.Frame(paned, bg=CLR_BG)
+        paned.add(left, minsize=420, stretch="always")
 
         # Thanh tìm kiếm
         search_card = tk.Frame(left, bg=CLR_CARD, bd=0,
@@ -225,10 +237,17 @@ class BookingWindow:
         self.tree_trips.bind("<<TreeviewSelect>>", self._on_trip_selected)
 
         # ── Cột phải ─────────────────────────────────────────
-        right = tk.Frame(main, bg=CLR_CARD, width=520)
-        right.pack(side=tk.RIGHT, fill=tk.BOTH)
-        right.pack_propagate(False)
+        right = tk.Frame(paned, bg=CLR_CARD)
+        paned.add(right, minsize=380, stretch="always")
         _card_shadow(right)
+
+        # Sau khi add xong 2 pane, đặt vị trí sash mặc định ~55% chiều ngang
+        def _set_sash(event=None):
+            try:
+                paned.sash_place(0, int(paned.winfo_width() * 0.54), 0)
+            except Exception:
+                pass
+        paned.bind("<Map>", _set_sash)
 
         # Header sơ đồ ghế
         hdr = tk.Frame(right, bg="#0F172A", pady=10, padx=12)
@@ -631,20 +650,53 @@ class BookingWindow:
 
     def _do_hold_and_open_payment(self, seats: list):
         """Gọi server giữ chỗ sau khi user đã xác nhận."""
-        resp = self.client.hold_seats(self.current_trip, seats)
-        if resp.get("status") == "SUCCESS":
-            self.is_holding     = True
-            self.held_seats     = seats
-            self.hold_time_left = resp.get("hold_timeout_seconds",
-                                           HOLD_TIMEOUT_SECONDS)
-            self._start_countdown()
-            self._open_payment_dialog(seats)
-        else:
-            messagebox.showerror(
-                "Giữ chỗ thất bại",
-                resp.get("message", "Ghế đã có người chọn trước!\nVui lòng chọn ghế khác.")
-            )
-            self._refresh_seats()
+        if self.hold_request_pending:
+            return
+        self.hold_request_pending = True
+        trip_id = self.current_trip
+        wait_dialog = tk.Toplevel(self.root)
+        wait_dialog.title("Đang giữ ghế")
+        wait_dialog.transient(self.root)
+        wait_dialog.resizable(False, False)
+        wait_dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        tk.Label(
+            wait_dialog,
+            text="Đang xác nhận ghế với máy chủ...",
+            font=("Segoe UI", 10),
+            padx=24,
+            pady=20,
+        ).pack()
+        wait_dialog.grab_set()
+
+        def on_result(resp):
+            self.hold_request_pending = False
+            try:
+                wait_dialog.grab_release()
+                wait_dialog.destroy()
+            except tk.TclError:
+                pass
+            if resp.get("status") == "SUCCESS":
+                self.is_holding     = True
+                self.held_seats     = seats
+                self.hold_time_left = resp.get("hold_timeout_seconds",
+                                               HOLD_TIMEOUT_SECONDS)
+                self._start_countdown()
+                self._open_payment_dialog(seats)
+            else:
+                messagebox.showerror(
+                    "Giữ chỗ thất bại",
+                    resp.get("message", "Ghế đã có người chọn trước!\nVui lòng chọn ghế khác.")
+                )
+                self._refresh_seats()
+
+        def send():
+            resp = self.client.hold_seats(trip_id, seats, timeout=30.0)
+            try:
+                self.root.after(0, lambda: on_result(resp))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=send, daemon=True).start()
 
     def _start_countdown(self):
         if self.timer_job:
@@ -804,29 +856,78 @@ class BookingWindow:
                                        "Vui lòng nhập Họ tên và Số điện thoại!",
                                        parent=dlg)
                 return
-            resp = self.client.confirm_booking(
-                trip_id=self.current_trip,
-                seats=seats,
-                passenger_info=pdata,
-                payment_method="VIETQR"
-            )
-            if resp.get("status") == "SUCCESS":
-                self._cancel_hold_timer()
-                dlg.destroy()
-                messagebox.showinfo(
-                    "Đặt vé thành công 🎉",
-                    f"Mã vé: {resp.get('booking_code')}\n"
-                    f"Ghế: {resp.get('seats')}\n"
-                    f"Tổng tiền: {resp.get('total_amount'):,} VNĐ\n\n"
-                    f"Vé điện tử đã sẵn sàng trong 'Vé của tôi'!"
+
+            # Disable nút trong lúc gửi
+            btn_confirm.config(state=tk.DISABLED, text="⏳ Đang xử lý...")
+
+            def send():
+                resp = self.client.confirm_booking(
+                    trip_id=self.current_trip,
+                    seats=seats,
+                    passenger_info=pdata,
+                    payment_method="VIETQR",
+                    timeout=30.0,
                 )
-                self.my_selected_seats.clear()
-                self._refresh_seats()
-                self._open_history()
-            else:
-                messagebox.showerror("Đặt vé thất bại",
-                                     resp.get("message","Lỗi xác nhận!"),
-                                     parent=dlg)
+                dlg.after(0, lambda: on_result(resp))
+
+            def on_result(resp):
+                if resp.get("status") == "SUCCESS":
+                    # 1. Đóng dialog thanh toán
+                    self._cancel_hold_timer()
+                    dlg.destroy()
+
+                    # 2. Cập nhật ghế → ĐỎ (BOOKED) ngay trên sơ đồ
+                    for sn in seats:
+                        self.trip_seats[sn] = SEAT_BOOKED
+                        self._apply_seat_style(sn, SEAT_BOOKED)
+                    self.my_selected_seats.clear()
+                    self._update_summary()
+
+                    # 3. Hiện popup thành công
+                    amount = resp.get("total_amount", 0)
+                    try:
+                        amount_fmt = f"{int(amount):,} VNĐ".replace(",", ".")
+                    except (ValueError, TypeError):
+                        amount_fmt = f"{amount} VNĐ"
+
+                    messagebox.showinfo(
+                        "🎉 Đặt vé thành công!",
+                        f"✅ Đã lưu vào cơ sở dữ liệu!\n\n"
+                        f"  Mã vé   :  {resp.get('booking_code')}\n"
+                        f"  Ghế     :  {resp.get('seats')}\n"
+                        f"  Tuyến   :  {route}\n"
+                        f"  Tổng    :  {amount_fmt}\n\n"
+                        f"Vé điện tử đã sẵn sàng trong 'Vé của tôi'!"
+                    )
+
+                    # 4. Refresh sơ đồ ghế từ server (để đồng bộ)
+                    def bg_refresh():
+                        r = self.client.get_seats(self.current_trip)
+                        if r.get("status") == "SUCCESS":
+                            self.root.after(0, lambda: _apply_refresh(r))
+
+                    def _apply_refresh(r):
+                        self.trip_seats = r.get("seats", {})
+                        self._render_seat_map()
+                        self._update_summary()
+                        # Cập nhật cột Còn trống trong bảng chuyến
+                        self._load_trips()
+
+                    import threading as _th
+                    _th.Thread(target=bg_refresh, daemon=True).start()
+
+                    # 5. Mở lịch sử vé
+                    self._open_history()
+
+                else:
+                    btn_confirm.config(state=tk.NORMAL,
+                                       text="✅  Đã chuyển khoản — Xác nhận đặt vé")
+                    messagebox.showerror("Đặt vé thất bại",
+                                         resp.get("message", "Lỗi xác nhận!"),
+                                         parent=dlg)
+
+            import threading as _th
+            _th.Thread(target=send, daemon=True).start()
 
         def do_cancel():
             self.client.release_seats(self.current_trip, seats)
@@ -835,12 +936,13 @@ class BookingWindow:
             self.my_selected_seats.clear()
             self._refresh_seats()
 
-        tk.Button(
+        btn_confirm = tk.Button(
             btn_row, text="✅  Đã chuyển khoản — Xác nhận đặt vé",
             bg="#059669", fg="#FFFFFF",
             font=("Segoe UI", 10, "bold"), relief=tk.FLAT,
             pady=8, cursor="hand2", command=do_confirm
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        )
+        btn_confirm.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
         tk.Button(
             btn_row, text="❌  Huỷ",

@@ -178,8 +178,11 @@ def handle_confirm_booking(trip_id: int, seats: list, token: str, passenger_info
     if not session:
         return False, "Phiên làm việc hết hạn. Vui lòng đăng nhập lại!", None
     user_id = session["user_id"]
-    success, result, updated = db.confirm_booking(trip_id, seats, token, passenger_info, payment_method, user_id)
+    success, result = db.confirm_booking(
+        trip_id, seats, token, passenger_info, payment_method, user_id
+    )
     if success:
+        updated = {seat: SEAT_BOOKED for seat in seats}
         return True, result, updated
     return False, result, None
 
@@ -290,6 +293,33 @@ def handle_voice_call_end(call_id: str, from_sock):
         return True, "Đã kết thúc cuộc gọi."
 
 # --- Quản trị & Điều khiển toàn bộ hệ thống (STT 6, 7, 10, 20, 27, 28, 30, 31, 32, 34) ---
+def handle_voice_udp_port(call_id: str, from_sock, udp_port: int):
+    """
+    Relay UDP port của một bên đến bên còn lại trong cuộc gọi.
+    Client phía callee gọi VOICE_UDP_PORT sau khi AudioEngine khởi động,
+    server forward event VOICE_UDP_PORT tới caller để caller biết port mà connect vào.
+    """
+    with calls_lock:
+        call = active_calls.get(call_id)
+        if not call:
+            return
+
+        # Xác định socket của bên kia
+        if from_sock == call["caller_sock"]:
+            other_sock = call["callee_sock"]
+        else:
+            other_sock = call["caller_sock"]
+
+    try:
+        protocol.send_msg(other_sock, {
+            "event":    "VOICE_UDP_PORT",
+            "call_id":  call_id,
+            "udp_port": udp_port,
+        })
+    except Exception:
+        pass
+
+
 def is_admin(token: str) -> bool:
     session = get_session(token)
     return session is not None and session["role"] == ROLE_ADMIN

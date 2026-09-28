@@ -10,6 +10,7 @@ import queue
 import time
 import os
 import sys
+import uuid
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
@@ -134,7 +135,8 @@ class NetworkClient:
                                 pass
 
                     elif evt in (EVENT_VOICE_CALL_INCOMING, EVENT_VOICE_CALL_ACCEPTED,
-                                 EVENT_VOICE_CALL_REJECTED, EVENT_VOICE_CALL_ENDED):
+                                 EVENT_VOICE_CALL_REJECTED, EVENT_VOICE_CALL_ENDED,
+                                 "VOICE_UDP_PORT"):
                         for cb in self.voice_call_callbacks:
                             try:
                                 cb(evt, msg)
@@ -200,25 +202,28 @@ class NetworkClient:
             return {"status": STATUS_ERROR, "message": "Chưa kết nối tới máy chủ!"}
 
         with self.send_lock:
-            while not self.response_queue.empty():
-                try:
-                    self.response_queue.get_nowait()
-                except queue.Empty:
-                    break
-
+            request_id = uuid.uuid4().hex
+            request = dict(payload)
+            request["request_id"] = request_id
             if self.token and "token" not in payload:
-                payload["token"] = self.token
+                request["token"] = self.token
 
-            sent = protocol.send_msg(self.sock, payload)
+            sent = protocol.send_msg(self.sock, request)
             if not sent:
                 self.is_connected = False
                 return {"status": STATUS_ERROR, "message": "Lỗi gửi gói tin tới máy chủ!"}
 
-            try:
-                resp = self.response_queue.get(timeout=timeout)
-                return resp
-            except queue.Empty:
-                return {"status": STATUS_ERROR, "message": "Hết thời gian chờ phản hồi từ máy chủ!"}
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return {"status": STATUS_ERROR, "message": "Hết thời gian chờ phản hồi từ máy chủ!"}
+                try:
+                    resp = self.response_queue.get(timeout=remaining)
+                except queue.Empty:
+                    return {"status": STATUS_ERROR, "message": "Hết thời gian chờ phản hồi từ máy chủ!"}
+                if resp.get("request_id") == request_id:
+                    return resp
 
     # --- Các hàm nghiệp vụ ---
     def login(self, username, password):
@@ -268,20 +273,20 @@ class NetworkClient:
         req = {"action": ACTION_GET_SEATS, "trip_id": trip_id}
         return self.send_request(req)
 
-    def hold_seats(self, trip_id: int, seats: list):
+    def hold_seats(self, trip_id: int, seats: list, timeout: float = 30.0):
         req = {"action": ACTION_HOLD_SEATS, "trip_id": trip_id, "seats": seats}
-        return self.send_request(req)
+        return self.send_request(req, timeout=timeout)
 
     def release_seats(self, trip_id: int, seats: list):
         req = {"action": ACTION_RELEASE_SEATS, "trip_id": trip_id, "seats": seats}
         return self.send_request(req)
 
-    def confirm_booking(self, trip_id: int, seats: list, passenger_info: dict, payment_method: str = "VIETQR"):
+    def confirm_booking(self, trip_id: int, seats: list, passenger_info: dict, payment_method: str = "VIETQR", timeout: float = 30.0):
         req = {
             "action": ACTION_CONFIRM_BOOKING, "trip_id": trip_id,
             "seats": seats, "passenger_info": passenger_info, "payment_method": payment_method
         }
-        return self.send_request(req)
+        return self.send_request(req, timeout=timeout)
 
     def get_my_tickets(self):
         req = {"action": ACTION_GET_MY_TICKETS}

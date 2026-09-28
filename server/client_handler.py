@@ -44,6 +44,8 @@ class ClientHandler(threading.Thread):
 
                 resp = self.process_request(req)
                 if resp is not None:
+                    if "request_id" in req:
+                        resp["request_id"] = req["request_id"]
                     protocol.send_msg(self.sock, resp)
 
         except Exception as e:
@@ -216,6 +218,13 @@ class ClientHandler(threading.Thread):
             call_id = req.get("call_id")
             success, msg = bl.handle_voice_call_end(call_id, self.sock)
             return {"status": STATUS_SUCCESS, "message": msg}
+
+        # Relay UDP port giữa 2 bên để thiết lập kênh audio
+        elif action == "VOICE_UDP_PORT":
+            call_id  = req.get("call_id")
+            udp_port = req.get("udp_port", 0)
+            bl.handle_voice_udp_port(call_id, self.sock, udp_port)
+            return {"status": STATUS_SUCCESS, "message": "UDP port relayed"}
 
         # --- ADMIN / QUẢN TRỊ HỆ THỐNG (STT 6, 7, 10, 20, 27, 28, 30, 31, 32, 33, 34) ---
         elif action == ACTION_ADMIN_GET_ONLINE_USERS:

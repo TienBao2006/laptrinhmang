@@ -1,0 +1,201 @@
+CAC MO HINH CUA HE THONG DAT VE XE TRAINBUS
+============================================
+
+Tai lieu nay tom tat cac mo hinh kien truc, xu ly va du lieu dang co trong ma nguon.
+Phan mo ta database can cu vao server/database.py va common/constants.py.
+
+1. TONG QUAN
+------------
+TrainBus la ung dung desktop Python/Tkinter dat ve xe. Client gui yeu cau den
+server qua TCP Socket; server kiem tra nghiep vu, doc/ghi MySQL va tra ket qua.
+Client khong ket noi truc tiep toi database.
+
+Mo hinh tong quat:
+
+  Giao dien Tkinter
+       | goi ham API
+       v
+  NetworkClient
+       | TCP: JSON co header do dai
+       v
+  BusBookingServer -> ClientHandler rieng cho moi ket noi
+       |                         |
+       v                         +--> Broadcast su kien den client
+  Business logic
+       |
+       v
+  database.py -> MySQL trainbus
+
+2. CAC MO HINH KIEN TRUC VA XU LY
+---------------------------------
+
+2.1. Mo hinh Client - Server
+
+- Server lang nghe TCP tai cong 8888 va quan ly du lieu tap trung.
+- Client thuong (run_client.py) phuc vu Customer va Driver.
+- Giao dien quan tri (run_admin.py) phuc vu Admin va Staff.
+- Cac ung dung gui lenh nhu LOGIN, GET_TRIPS, HOLD_SEATS; server xu ly va
+  gui phan hoi ve ket noi tuong ung.
+- Phan quyen duoc kiem tra o server, khong chi an/hien nut tren giao dien.
+
+2.2. Mo hinh phan lop
+
+- Lop giao dien: cac file gui_*.py hien thi dang nhap, tim chuyen, chon ghe,
+  lich su ve va quan tri.
+- Lop giao tiep: client/network_client.py quan ly socket, gui request, nhan
+  response/su kien va chuyen den callback cua giao dien.
+- Lop giao thuc: common/protocol.py dong goi va tach message tren TCP.
+- Lop xu ly server: server/client_handler.py tiep nhan action; business_logic.py
+  xu ly session, phan quyen va nghiep vu.
+- Lop du lieu: server/database.py truy van va cap nhat MySQL.
+
+2.3. Mo hinh da luong
+
+- Moi socket client duoc server tao mot ClientHandler (thread) de doc va xu ly
+  request doc lap voi cac ket noi khac.
+- Client co luong lang nghe socket va heartbeat chay nen; giao dien Tkinter van
+  xu ly tren luong giao dien.
+- SeatTimerWorker la luong nen tren server, quet ghe giu cho qua han moi 2 giay.
+- database.py dung db_lock de bao ve cac thao tac database trong cung mot
+  tien trinh server. Ket noi MySQL bat autocommit; day khong phai la transaction
+  SQL bao trum nhieu lenh va cung khong phai khoa dong bo giua nhieu server.
+
+2.4. Mo hinh Request - Response va Broadcast
+
+- Request/response: client gui mot action; ClientHandler xu ly va tra mot
+  dictionary ket qua co status SUCCESS hoac ERROR. Request co request_id de
+  client ghep phan hoi voi lenh dang cho.
+- Broadcast: server gui event rieng, khong phai response cua request. Vi du,
+  SEAT_UPDATE cap nhat so do ghe; NOTIFICATION gui thong bao; USER_STATUS bao
+  trang thai online/offline.
+- Client NetworkClient tach message co truong event khoi response thuong.
+  Callback giao dien duoc dung de cap nhat man hinh.
+
+2.5. Mo hinh dong goi giao thuc TCP
+
+TCP la luong byte, khong danh dau ranh gioi message. Moi message cua ung dung
+duoc dong goi theo dang:
+
+  [4 byte unsigned Big-Endian: do dai payload] [JSON UTF-8]
+
+send_msg() gui ca header va payload; recv_msg() doc dung so byte theo header
+roi giai ma JSON. Cach nay giup ung dung tach dung message khi TCP chia nho
+hoac gop du lieu trong qua trinh truyen.
+
+3. CAC MODEL DU LIEU
+-------------------
+
+server/models.py khai bao 4 Python dataclass de mo ta cac doi tuong nghiep vu:
+
+- User: id, username, password_hash, fullname, phone, email, role.
+- Trip: id, thong tin xe/tuyen, departure_time, price, total_seats va
+  available_seats.
+- Seat: id, trip_id, seat_number, status, held_by_token va held_time.
+- Ticket: id, booking_code, trip_id, user_id, danh sach ghe, thong tin hanh
+  khach, tong tien, phuong thuc thanh toan, thoi diem va trang thai.
+
+Luu y: cac dataclass nay hien la khai bao mo hinh du lieu, nhung cac luong doc
+duoc kiem tra trong code chua khoi tao/chuyen row database thanh User, Trip,
+Seat hoac Ticket. database.py chu yeu tra dictionary (MySQL DictCursor), va
+business logic truyen tiep dictionary/list. Vi vay khong nen nham cac dataclass
+voi ORM hoac mot tang Model da duoc su dung day du.
+
+4. CAC BANG MYSQL VA QUAN HE CHINH
+----------------------------------
+
+- users: tai khoan, mat khau da bam, thong tin lien he, role va trang thai.
+- vehicles: thong tin xe va tai xe.
+- trips: tuyen, gio khoi hanh, gia, so ghe; bus_number duoc luu trong bang nay.
+- seats: tung ghe tren mot chuyen, trang thai va thong tin giu ghe.
+- tickets: ve da dat, hanh khach, cac ghe, so tien va trang thai ve.
+- notifications: thong bao, co the gan voi mot user hoac gui chung.
+- system_logs: nhat ky thao tac/he thong.
+
+Quan he du lieu trong schema:
+- Mot trip co nhieu seats; moi seat thuoc mot trip (khoa ngoai trip_id).
+- Mot trip co the co nhieu tickets; mot user co the co nhieu tickets.
+- Vehicle va trip lien ket bang bus_number trong du lieu, khong phai khoa ngoai
+  vehicles.id theo schema hien tai.
+
+5. MO HINH TRANG THAI GHE VA LUONG DAT VE
+-----------------------------------------
+
+Trang thai ghe:
+
+  AVAILABLE --giu cho--> HOLDING --xac nhan dat--> BOOKED
+       ^                     |                         |
+       |                     +--huy/qua han/mat ket noi+
+       +---------------------+                         |
+       +---------------------------huy ve--------------+
+
+Luong dat ve:
+
+1. Client goi GET_TRIPS de tim chuyen; GET_SEATS de tai trang thai ghe.
+2. Viec click chon ghe ban dau chi la lua chon tren giao dien.
+3. Khi gui HOLD_SEATS, server kiem tra session va trang thai tung ghe. Ghe hop
+   le chuyen sang HOLDING, gan token va thoi diem giu; server broadcast de cac
+   client khac dang xem chuyen do cap nhat.
+4. Client hien thong tin/QR thanh toan va gui CONFIRM_BOOKING khi nguoi dung
+   xac nhan. Server kiem tra lai ghe, tao ticket, chuyen ghe sang BOOKED va
+   broadcast trang thai moi.
+5. RELEASE_SEATS, huy ve, het thoi gian giu hoac ngat ket noi co the tra ghe ve
+   AVAILABLE. Timer worker giai phong ghe HOLDING qua 180 giay.
+
+QR VietQR trong giao dien chi tao thong tin de nguoi dung chuyen khoan va tu
+xac nhan; code hien tai khong ket noi ngan hang de tu dong xac minh thanh toan.
+
+6. MO HINH PHIEN VA PHAN QUYEN
+------------------------------
+
+- Dang nhap thanh cong tao token session tren server; request sau gui token de
+  server xac dinh nguoi dung.
+- Cac role duoc khai bao: Customer, Driver, Staff, Admin.
+- Giao dien client thong thuong chi chap nhan Customer/Driver; run_admin.py la
+  launcher cho giao dien quan tri Staff/Admin.
+- Business logic/ClientHandler kiem tra role truoc cac API quan tri. Staff va
+  Admin duoc phep xem mot so du lieu; mot so thao tac thay doi chi danh cho Admin.
+
+7. MO HINH CUOC GOI THOAI
+------------------------
+
+- TCP dung de bao hieu: goi, chap nhan/tu choi, ket thuc va trao doi UDP port.
+- AudioEngine trong client/voice_call.py thu/phat am thanh bang sounddevice,
+  xu ly mang PCM int16 va gui cac chunk qua UDP socket truc tiep giua hai client.
+- Server quan ly trang thai cuoc goi va relay thong tin dieu khien/port; am thanh
+  khong di qua database va khong duoc chuyen thanh luong TCP cua server.
+- Tinh nang am thanh can cac goi numpy va sounddevice; sounddevice duoc import
+  tuy chon trong code va audio co the khong hoat dong neu thieu thu vien/thiet bi.
+
+8. CAC MODULE CHINH
+-------------------
+
+- run_server.py: khoi dong TCP server.
+- run_client.py / client/client_main.py: khoi dong giao dien Customer/Driver.
+- run_admin.py: khoi dong giao dien Staff/Admin.
+- client/network_client.py: socket, request/response, heartbeat va callback.
+- common/protocol.py: framing TCP bang do dai + JSON.
+- server/server_main.py: accept ket noi, quan ly client va broadcast.
+- server/client_handler.py: xu ly action cho mot ket noi.
+- server/business_logic.py: session, phan quyen, nghiep vu va trang thai trong bo nho.
+- server/database.py: schema, truy van va cap nhat MySQL trainbus.
+- server/seat_timer_worker.py: giai phong ghe giu qua han.
+- server/models.py: dataclass mo ta User, Trip, Seat, Ticket; hien chua duoc
+  dung truc tiep trong cac luong xu ly da doi chieu.
+
+9. LUU Y KHI DOC DU AN
+----------------------
+
+- Ma nguon hien tai dung MySQL qua PyMySQL. README.md con noi ve SQLite va
+  khong can thu vien ngoai, nen phan nay da loi thoi so voi database.py.
+- Server doc cau hinh MySQL va cong tu common/constants.py; can co MySQL dang
+  chay va cai PyMySQL de khoi dong backend.
+- Cac thao tac database duoc khoa trong mot tien trinh server, nhung code
+  booking khong mo SQL transaction tuong minh; khong nen mo ta day la dam bao
+  transaction phan tan.
+- Giao dien QR khong dong nghia voi thanh toan da duoc ngan hang xac thuc.
+
+Tom tat: day la mo hinh Client - Server phan lop, su dung TCP JSON cho lenh va
+su kien, xu ly ket noi bang thread, luu du lieu MySQL; nghiep vu dat ve duoc
+to chuc quanh cac model User/Trip/Seat/Ticket va state machine trang thai ghe.
+Trong code hien tai, dataclass mo ta model nhung dictionary/MySQL moi la dang du
+lieu chay chinh.

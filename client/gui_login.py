@@ -81,17 +81,45 @@ class LoginWindow:
                        highlightthickness=1)
         bar.pack(fill=tk.X, padx=24, pady=(12, 0))
 
-        inner = tk.Frame(bar, bg=CLR_CARD, padx=14, pady=8)
+        inner = tk.Frame(bar, bg=CLR_CARD, padx=14, pady=10)
         inner.pack(fill=tk.X)
 
+        host_row = tk.Frame(inner, bg=CLR_CARD)
+        host_row.pack(fill=tk.X, pady=(0, 7))
+
+        tk.Label(
+            host_row, text=f"IP máy chủ ({self.client.port})",
+            font=("Segoe UI", 9, "bold"), fg=CLR_TEXT, bg=CLR_CARD
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.host_var = tk.StringVar(value=self.client.host)
+        self.ent_host = ttk.Entry(
+            host_row, font=("Segoe UI", 9), textvariable=self.host_var
+        )
+        self.ent_host.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.ent_host.bind("<Return>", lambda e: self._on_connect())
+
+        self.btn_connect = tk.Button(
+            host_row, text="Kết nối",
+            bg=CLR_ACCENT, fg="#FFFFFF",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT,
+            padx=10, pady=3, cursor="hand2",
+            activebackground="#0284C7",
+            command=self._on_connect
+        )
+        self.btn_connect.pack(side=tk.RIGHT)
+
+        status_row = tk.Frame(inner, bg=CLR_CARD)
+        status_row.pack(fill=tk.X)
+
         self.lbl_status = tk.Label(
-            inner, text="⚪  Đang kết nối tới máy chủ...",
+            status_row, text="⚪  Đang kết nối tới máy chủ...",
             font=("Segoe UI", 9), fg=CLR_SUB, bg=CLR_CARD, anchor=tk.W
         )
         self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.btn_retry = tk.Button(
-            inner, text="🔄 Thử lại",
+            status_row, text="🔄 Thử lại",
             bg=CLR_ACCENT, fg="#FFFFFF",
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT,
             padx=10, pady=3, cursor="hand2",
@@ -229,19 +257,32 @@ class LoginWindow:
     #  KẾT NỐI
     # ══════════════════════════════════════════════════════════
     def _try_auto_connect(self):
+        self._connect_to_host()
+
+    def _on_connect(self):
+        self._connect_to_host()
+
+    def _connect_to_host(self):
+        host = self.ent_host.get().strip()
+        if not host:
+            messagebox.showwarning("Thiếu địa chỉ máy chủ", "Vui lòng nhập IP hoặc tên máy chủ.", parent=self.root)
+            return
+
+        self.lbl_status.config(text="⚪  Đang kết nối tới máy chủ...", fg=CLR_SUB)
+        self.btn_connect.config(state=tk.DISABLED)
+        self.btn_retry.config(state=tk.DISABLED)
+
         def task():
-            ok, msg = self.client.connect(self.client.host, self.client.port)
+            ok, msg = self.client.connect(host, self.client.port)
             self.root.after(0, lambda: self._update_status(ok))
         threading.Thread(target=task, daemon=True).start()
 
     def _on_retry(self):
-        self.lbl_status.config(text="⚪  Đang kết nối lại...", fg=CLR_SUB)
-        def task():
-            ok, msg = self.client.connect(self.client.host, self.client.port)
-            self.root.after(0, lambda: self._update_status(ok))
-        threading.Thread(target=task, daemon=True).start()
+        self._connect_to_host()
 
     def _update_status(self, success: bool):
+        self.btn_connect.config(state=tk.NORMAL)
+        self.btn_retry.config(state=tk.NORMAL)
         if success:
             self.lbl_status.config(
                 text=f"🟢  Đã kết nối  —  {self.client.host}:{self.client.port}",

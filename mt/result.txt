@@ -1,0 +1,1098 @@
+================================================================================
+  TÀI LIỆU MÔ TẢ CODE — HỆ THỐNG ĐẶT VÉ XE KHÁCH TRAINBUS
+  Bus Booking System — TCP Socket + MySQL + Tkinter GUI
+================================================================================
+
+Cập nhật: 25/09/2026
+Tác giả  : TrainBus Dev Team
+
+Cấu trúc dự án:
+  client/         — Ứng dụng GUI phía khách hàng & admin
+  server/         — Máy chủ TCP Socket đa luồng
+  common/         — Module dùng chung (hằng số, giao thức, QR)
+
+================================================================================
+CỔNG ĐĂNG NHẬP — 2 ỨNG DỤNG RIÊNG BIỆT
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  run_client.py  →  client/client_main.py  →  gui_login.py              │
+  │  Dành cho: Customer, Driver                                             │
+  │  Sau đăng nhập: BookingWindow (đặt vé, chọn ghế, thanh toán)           │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  run_admin.py   →  gui_login_admin.py      →  CustomerCareWindow        │
+  │  Dành cho: Admin, Staff                                                 │
+  │  Sau đăng nhập: CustomerCareWindow (8 tab quản lý CSKH)                │
+  │  Giao diện tối màu (dark theme tím), chỉ chấp nhận role Admin/Staff    │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  Lưu ý: Nếu Customer/Driver chạy run_admin.py → bị từ chối ngay sau login.
+         Nếu Admin/Staff   chạy run_client.py → bị từ chối ngay sau login.
+
+================================================================================
+MỤC LỤC
+================================================================================
+  ── ENTRY POINTS ──
+  A.  run_client.py              — Khởi động ứng dụng Khách hàng
+  B.  run_admin.py               — Khởi động ứng dụng Quản trị / CSKH
+
+  ── CLIENT (Khách hàng / Tài xế) ──
+  1.  client/client_main.py      — Điều phối màn hình sau đăng nhập
+  2.  client/gui_login.py        — Màn hình Đăng nhập / Đăng ký (theme sáng)
+  3.  client/gui_booking.py      — Màn hình Đặt vé chính
+  4.  client/gui_history.py      — Màn hình Lịch sử vé
+  5.  client/gui_profile.py      — Màn hình Hồ sơ cá nhân
+
+  ── ADMIN / STAFF (Quản trị / Chăm sóc khách hàng) ──
+  6.  client/gui_login_admin.py  — Màn hình Đăng nhập Admin (theme tối tím)
+  7.  client/gui_admin.py        — Màn hình Chăm Sóc Khách Hàng (8 tab)
+
+  ── DÙNG CHUNG ──
+  8.  client/network_client.py   — Lớp kết nối mạng TCP + API Methods
+  9.  client/voice_call.py       — Tính năng gọi thoại UDP thời gian thực
+
+  ── SERVER ──
+  10. server/server_main.py      — Entry point Máy chủ TCP
+  11. server/client_handler.py   — Xử lý kết nối từng Client (Thread)
+  12. server/business_logic.py   — Tầng Logic Nghiệp vụ
+  13. server/database.py         — Tầng Truy cập Dữ liệu MySQL
+  14. server/models.py           — Cấu trúc dữ liệu (Dataclass)
+  15. server/seat_timer_worker.py — Daemon quét ghế hết hạn
+
+  ── COMMON ──
+  16. common/constants.py        — Hằng số dùng chung
+  17. common/protocol.py         — Giao thức đóng/giải gói TCP
+  18. common/qr_generator.py     — Sinh mã QR Code
+
+================================================================================
+A. run_client.py
+================================================================================
+MỤC ĐÍCH:
+  Entry point ứng dụng Khách hàng. Chỉ import ClientApplication và gọi run().
+  Chạy lệnh: python run_client.py
+
+================================================================================
+B. run_admin.py
+================================================================================
+MỤC ĐÍCH:
+  Entry point ứng dụng Quản trị / Chăm sóc khách hàng.
+  Chạy lệnh: python run_admin.py
+
+Luồng hoạt động:
+  show_login()  →  AdminLoginWindow  →  on_login_success  →  show_admin()
+                                                              ↓
+                                                     root.withdraw()
+                                                     CustomerCareWindow
+                                                              ↓
+                                                     on_close → logout → show_login()
+
+Các hàm nội bộ (hàm lồng trong main()):
+  show_login()       — Deiconify root, tạo AdminLoginWindow với callback show_admin.
+  show_admin(client) — Ẩn root, tạo CustomerCareWindow với callback on_admin_close.
+  on_admin_close()   — Logout, gọi show_login() qua root.after_idle.
+  on_close()         — Disconnect sạch rồi destroy root khi bấm X.
+
+================================================================================
+1. client/client_main.py
+================================================================================
+MỤC ĐÍCH:
+  Entry point ứng dụng Khách hàng. Quản lý chuyển đổi giữa LoginWindow và
+  BookingWindow. Chỉ cho phép role Customer / Driver đăng nhập tại đây.
+  Admin / Staff phải dùng run_admin.py.
+
+CLASS: ClientApplication
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def __init__(self)                                                      │
+  │   Khởi tạo cửa sổ Tkinter gốc, tạo NetworkClient, đăng ký             │
+  │   WM_DELETE_WINDOW, gọi show_login().                                  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def show_login(self)                                                    │
+  │   Deiconify root (hiện lại nếu bị ẩn), xóa widget cũ, tạo LoginWindow.│
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_login_success(self, client)                                     │
+  │   Kiểm tra role sau đăng nhập:                                         │
+  │   • Customer / Driver  → show_booking()                                │
+  │   • Admin / Staff      → logout ngay + messagebox lỗi + show_login()  │
+  │     (yêu cầu dùng run_admin.py)                                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def show_booking(self, client)                                          │
+  │   Xóa giao diện, tạo BookingWindow với callback on_logout=show_login.  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _clear_root(self)                                                   │
+  │   Hủy tất cả widget con của root.                                      │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def on_close(self)                                                      │
+  │   Ngắt kết nối mạng rồi destroy root.                                  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def run(self)                                                           │
+  │   Khởi chạy root.mainloop().                                           │
+  └─────────────────────────────────────────────────────────────────────────┘
+  │ def show_customer_care(self)                                            │
+  │   Ẩn cửa sổ root (root.withdraw()), tạo CustomerCareWindow (Toplevel)  │
+  │   cho Admin/Staff. Khi đóng CustomerCareWindow sẽ gọi                  │
+  │   _on_care_close() để quay về đăng nhập.                               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_care_close(self)                                                │
+  │   Gọi client.logout() rồi gọi show_login() để Admin/Staff có thể      │
+  │   đăng xuất và quay về màn hình đăng nhập.                             │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _clear_root(self)                                                   │
+  │   Hủy (destroy) tất cả widget con của cửa sổ root để dọn sạch trước   │
+  │   khi tạo màn hình mới.                                                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def on_close(self)                                                      │
+  │   Xử lý sự kiện đóng cửa sổ: ngắt kết nối mạng an toàn rồi gọi       │
+  │   root.destroy().                                                       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def run(self)                                                           │
+  │   Khởi chạy vòng lặp sự kiện Tkinter (root.mainloop()).                │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+2. client/gui_login.py
+================================================================================
+MỤC ĐÍCH:
+  Màn hình Đăng nhập và Đăng ký tài khoản. Tự động kết nối tới server khi
+  khởi động, hiển thị trạng thái kết nối, cung cấp các nút demo quick-fill.
+
+CLASS: LoginWindow
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def __init__(self, root, network_client, on_login_success)              │
+  │   Khởi tạo màn hình login: lưu callback on_login_success, gọi          │
+  │   _build_ui() để dựng giao diện, tự động gọi _try_auto_connect().      │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_ui(self)                                                     │
+  │   Hàm điều phối: gọi lần lượt _build_header(), _build_status_bar(),   │
+  │   _build_tabs() để dựng toàn bộ giao diện.                             │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_header(self)                                                 │
+  │   Tạo phần tiêu đề với logo 🚌, tên hệ thống TRAINBUS và slogan.       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_status_bar(self)                                             │
+  │   Tạo thanh trạng thái kết nối server: label màu sắc (xanh/đỏ/vàng)  │
+  │   và nút "🔄 Thử lại" kết nối.                                         │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_tabs(self)                                                   │
+  │   Tạo Notebook với 2 tab: "Đăng nhập" và "Đăng ký tài khoản".         │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_login_tab(self)                                              │
+  │   Xây dựng form đăng nhập: ô username, password (ẩn), nút Đăng nhập,  │
+  │   và các nút quick-fill demo (khachhang/123456, admin/admin123, ...).  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_register_tab(self)                                           │
+  │   Xây dựng form đăng ký: username, password, họ tên, số điện thoại,   │
+  │   email và nút Đăng ký.                                                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _try_auto_connect(self)                                             │
+  │   Chạy thread nền để tự động kết nối server khi màn hình hiển thị,    │
+  │   cập nhật status bar sau khi có kết quả.                              │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_retry(self)                                                     │
+  │   Xử lý nút "Thử lại": chạy thread nền thử kết nối lại server.        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _update_status(self, success: bool)                                 │
+  │   Cập nhật label và màu sắc thanh trạng thái dựa trên kết quả kết      │
+  │   nối; bật/tắt nút Đăng nhập theo trạng thái is_connected.            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _quick_fill(self, user: str, pw: str)                               │
+  │   Điền nhanh username và password vào ô nhập liệu (dùng cho demo).     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_login(self)                                                     │
+  │   Validate form (không rỗng, đã kết nối), gọi client.login(), nếu     │
+  │   SUCCESS gọi on_login_success(client), nếu lỗi hiển thị messagebox.  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_register(self)                                                  │
+  │   Validate tất cả trường form đăng ký, gọi client.register(), hiển    │
+  │   thị thông báo thành công hoặc lỗi từ server.                         │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+HÀM NGOÀI MODULE:
+  _styled_entry(parent, show="") → ttk.Entry
+    Tạo Entry widget với style thống nhất (font Segoe UI 10, padding chuẩn).
+
+================================================================================
+6. client/gui_login_admin.py
+================================================================================
+MỤC ĐÍCH:
+  Màn hình Đăng nhập dành riêng cho Admin / Staff. Theme tối màu (nền đen,
+  accent tím #7C3AED) phân biệt rõ với màn hình đăng nhập khách hàng.
+  Chỉ chấp nhận role Admin hoặc Staff; các role khác bị logout ngay sau khi
+  server xác thực xong.
+
+  Khởi động: run_admin.py → show_login() → AdminLoginWindow
+
+CLASS: AdminLoginWindow
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def __init__(self, root, network_client, on_login_success)              │
+  │   Cửa sổ 480×520 dark theme, gọi _build_ui() và _try_auto_connect().  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_ui(self)                                                     │
+  │   Gọi _build_header(), _build_status_bar(), _build_login_form().       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_header(self)                                                 │
+  │   Tiêu đề "🛡️ TRANG QUẢN TRỊ HỆ THỐNG", thanh màu tím 5px, phân cách.│
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_status_bar(self)                                             │
+  │   Thanh trạng thái kết nối ⚪/🟢/🔴 và nút "🔄 Thử lại".               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_login_form(self)                                             │
+  │   Form đăng nhập: username, password, nút "ĐĂNG NHẬP VÀO HỆ THỐNG     │
+  │   QUẢN TRỊ", 2 nút quick-fill (admin/admin123 và nhanvien/123456),     │
+  │   cảnh báo "⚠️ Chỉ Admin hoặc Staff được phép đăng nhập tại đây".     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _try_auto_connect(self)                                             │
+  │   Thread nền kết nối server khi màn hình hiển thị.                     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_retry(self)                                                     │
+  │   Chạy thread nền thử kết nối lại khi bấm Thử lại.                     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _update_status(self, success: bool)                                 │
+  │   Cập nhật label trạng thái kết nối xanh/đỏ.                           │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _quick_fill(self, user: str, pw: str)                               │
+  │   Điền nhanh tài khoản demo vào form đăng nhập.                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_login(self)                                                     │
+  │   Gọi client.login(). Nếu SUCCESS:                                     │
+  │     - Role ∈ {Admin, Staff} → gọi on_login_success(client) ✅          │
+  │     - Role khác → client.logout() ngay + messagebox từ chối ❌         │
+  │   Nếu FAIL → hiển thị lỗi từ server.                                   │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+HÀM NGOÀI MODULE:
+  _dark_entry(parent, show="") → ttk.Entry
+    Entry dark theme: nền #0F172A, chữ trắng #F1F5F9.
+
+================================================================================
+3. client/gui_booking.py
+================================================================================
+MỤC ĐÍCH:
+  Màn hình đặt vé chính dành cho Customer/Driver. Hiển thị danh sách chuyến,
+  sơ đồ ghế real-time, chọn ghế, xác nhận đặt vé, thanh toán VietQR, gọi hỗ
+  trợ voice call, nhận thông báo và cập nhật ghế broadcast từ server.
+
+CLASS: BookingWindow
+  ── BUILD UI ──────────────────────────────────────────────────────────────
+  │ def __init__(self, root, network_client, on_logout)                     │
+  │   Khởi tạo trạng thái ghế (current_trip, trip_seats, my_selected_seats,│
+  │   held_seats, is_holding, timer_job, seat_buttons), đăng ký 5 loại     │
+  │   callback real-time, gọi _build_ui() và _load_trips().               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_ui(self)                                                     │
+  │   Gọi _build_navbar() và _build_main_content().                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_navbar(self)                                                 │
+  │   Tạo thanh điều hướng: logo, trạng thái mạng, tên + badge role, các  │
+  │   nút Đội xe, Tài khoản, Vé của tôi, Gọi hỗ trợ, Đăng xuất.          │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_main_content(self)                                           │
+  │   Tạo PanedWindow 2 cột kéo được: cột trái (bộ lọc tìm kiếm + bảng   │
+  │   chuyến xe), cột phải (header sơ đồ ghế + canvas ghế + bottom bar).  │
+
+  ── CHUYẾN XE ─────────────────────────────────────────────────────────────
+  │ def _load_trips(self)                                                   │
+  │   Đọc bộ lọc (điểm đi, điểm đến), gọi client.get_trips(), hiển thị   │
+  │   kết quả vào Treeview. Cũng được gọi lại sau khi đặt vé để cập nhật  │
+  │   cột "Còn trống".                                                     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_trip_selected(self, event)                                      │
+  │   Khi click chọn chuyến: hủy hold cũ nếu có, gọi client.get_seats(),  │
+  │   lưu trip_seats, render sơ đồ ghế mới.                               │
+
+  ── SƠ ĐỒ GHẾ ─────────────────────────────────────────────────────────────
+  │ def _render_seat_map(self)                                              │
+  │   Xóa và vẽ lại toàn bộ sơ đồ ghế: hiển thị thông tin chuyến ở header,│
+  │   tạo buồng lái, chia tầng (giường nằm 2 tầng / ghế ngồi 1 tầng).    │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _populate_grid(self, parent, seat_list, cols=3)                     │
+  │   Đặt từng nút ghế vào lưới grid với số cột chỉ định, gắn command      │
+  │   _on_seat_clicked.                                                    │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _apply_seat_style(self, sn, status)                                 │
+  │   Tô màu nút ghế theo trạng thái: xanh lá (AVAILABLE), xanh dương     │
+  │   (đang chọn), vàng (HOLDING), đỏ (BOOKED).                           │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_seat_clicked(self, sn)                                          │
+  │   Xử lý click ghế: bỏ qua ghế BOOKED hoặc HOLDING của người khác;     │
+  │   toggle chọn/bỏ chọn; cập nhật summary.                              │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _update_summary(self)                                               │
+  │   Cập nhật label ghế đã chọn, tính tổng tiền, enable/disable nút      │
+  │   "Giữ Chỗ & Thanh Toán" và nút "Bỏ chọn".                            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _reset_seat_selection(self)                                         │
+  │   Bỏ chọn tất cả ghế xanh dương, reset summary về "Chưa chọn ghế".   │
+
+  ── GIỮ CHỖ & THANH TOÁN ──────────────────────────────────────────────────
+  │ def _on_hold_and_pay_clicked(self)                                      │
+  │   Lấy thông tin chuyến, tính tổng tiền, mở dialog xác nhận trước khi  │
+  │   giữ chỗ (tránh bấm nhầm).                                           │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _do_hold_and_open_payment(self, seats: list)                        │
+  │   Chạy async: mở popup "Đang giữ ghế...", gọi client.hold_seats(),     │
+  │   nếu SUCCESS gọi _start_countdown() và _open_payment_dialog();        │
+  │   nếu FAIL hiển thị lỗi và _refresh_seats().                          │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _start_countdown(self)                                              │
+  │   Bắt đầu đếm ngược 180 giây giữ chỗ, cập nhật label mỗi giây, tự    │
+  │   động hủy và refresh ghế khi hết giờ.                                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _cancel_hold_timer(self)                                            │
+  │   Hủy after job đang chạy, đặt is_holding = False, xóa label đếm      │
+  │   ngược.                                                               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _refresh_seats(self)                                                │
+  │   Gọi client.get_seats() để lấy sơ đồ ghế mới nhất từ server và vẽ   │
+  │   lại. Dùng sau khi đặt vé xong, hủy giữ chỗ hoặc timeout.           │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _open_payment_dialog(self, seats: list)                             │
+  │   Mở dialog thanh toán: hiển thị thông tin chuyến, form hành khách    │
+  │   (tên, SĐT, email tự điền từ profile), mã QR VietQR, nút Xác nhận   │
+  │   và Huỷ. Xác nhận chạy async qua confirm_booking.                    │
+
+  ── VOICE CALL ─────────────────────────────────────────────────────────────
+  │ def _open_call_dialog(self)                                             │
+  │   Disable nút Gọi hỗ trợ, chạy thread lấy danh sách online users      │
+  │   (chỉ Admin/Staff), gọi _show_call_picker().                         │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _show_call_picker(self, resp)                                       │
+  │   Hiển thị dialog danh sách nhân viên CSKH đang online: avatar, tên,  │
+  │   username, role và nút "📞 Gọi". Click hàng hoặc nút đều gọi         │
+  │   _do_call().                                                          │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _do_call(self, target_username: str, target_name: str)              │
+  │   Gửi yêu cầu VOICE_CALL_ANY async, nếu SUCCESS mở CallingDialog      │
+  │   (chờ bắt máy); nếu FAIL hiển thị messagebox lỗi.                    │
+
+  ── REAL-TIME CALLBACKS ────────────────────────────────────────────────────
+  │ def _on_seat_broadcast(self, trip_id, updated_seats)                    │
+  │   Nhận broadcast cập nhật ghế từ server: chỉ cập nhật UI nếu đúng     │
+  │   chuyến đang xem; bỏ chọn ghế bị người khác lấy mất.                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_notification_broadcast(self, title, message)                    │
+  │   Nhận thông báo từ Admin và hiển thị messagebox popup.                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_voice_call_broadcast(self, evt: str, msg: dict)                 │
+  │   Nhận sự kiện VOICE_CALL_INCOMING: mở IncomingCallDialog.             │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_disconnected(self)                                              │
+  │   Cập nhật label mạng thành "🟡 Đang kết nối lại...".                 │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_reconnected(self)                                               │
+  │   Khôi phục label mạng xanh, tải lại chuyến xe và sơ đồ ghế.         │
+
+  ── CỬA SỔ PHỤ ────────────────────────────────────────────────────────────
+  │ def _open_history(self)       — Mở HistoryWindow (lịch sử vé).         │
+  │ def _open_profile(self)       — Mở ProfileWindow (hồ sơ cá nhân).      │
+  │ def _open_vehicles_view(self) — Mở dialog Đội xe với nút Tải lại.      │
+  │ def _do_logout(self)          — Xác nhận, giải phóng ghế, logout.       │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+HÀM NGOÀI MODULE:
+  _card_shadow(frame) — Thêm border nhẹ giả shadow cho Frame widget.
+
+================================================================================
+4. client/gui_admin.py
+================================================================================
+MỤC ĐÍCH:
+  Giao diện Trung tâm Chăm Sóc Khách Hàng dành cho Admin và Staff. Có 8 tab:
+  Dashboard, Khách Hàng, Quản Lý Vé, Online Ngay, Thông Báo, Thêm Chuyến,
+  Quản Lý Xe, Nhật Ký. Tự động load dữ liệu khi chuyển tab.
+
+CLASS: CustomerCareWindow (kế thừa tk.Toplevel)
+  ── BUILD UI ──────────────────────────────────────────────────────────────
+  │ def __init__(self, parent, network_client, on_close_callback=None)      │
+  │   Khởi tạo cửa sổ Toplevel với tiêu đề theo role/tên nhân viên,        │
+  │   gọi _build_ui() và _load_dashboard().                               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_header(self)                                                 │
+  │   Tạo thanh tiêu đề: logo 🎧, tên nhân viên, badge role (tím=Admin,    │
+  │   xanh=Staff) và nút "🔄 Làm mới".                                     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_notebook(self)                                               │
+  │   Tạo ttk.Notebook style "Care" với 8 tab, bind sự kiện                │
+  │   <<NotebookTabChanged>> → _on_tab_changed().                          │
+
+  ── TAB 1: DASHBOARD ──────────────────────────────────────────────────────
+  │ def _build_tab_dashboard(self)                                          │
+  │   Tạo 4 KPI card (Doanh thu, Vé bán, Chuyến, Khách hàng) và Treeview  │
+  │   100 giao dịch gần nhất.                                              │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_dashboard(self)                                               │
+  │   Reset KPI về "⏳ ...", chạy thread gọi admin_get_stats() và          │
+  │   admin_get_all_tickets() song song.                                   │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _apply_dashboard(self, r_stats, r_tickets)                          │
+  │   Cập nhật 4 KPI card và Treeview giao dịch. Hiển thị lỗi rõ nếu      │
+  │   server trả về ERROR.                                                 │
+
+  ── TAB 2: KHÁCH HÀNG ─────────────────────────────────────────────────────
+  │ def _build_tab_users(self)                                              │
+  │   Treeview danh sách user + toolbar (Tải lại, Tìm kiếm). Nếu role     │
+  │   Admin thêm panel Thao tác (đổi role, khóa/mở tài khoản).            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_users(self)                                                   │
+  │   Reset flag _users_loaded=False, hiện "⏳ Đang tải...", gọi           │
+  │   admin_get_users() trong thread.                                      │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _apply_users(self, resp)                                            │
+  │   Lưu data vào _all_users_data, đặt _users_loaded=True, gọi           │
+  │   _render_users() hoặc hiện lỗi.                                       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _render_users(self, users)                                          │
+  │   Xóa và điền Treeview với list users, hiển thị trạng thái             │
+  │   🟢/🔴 cho is_active.                                                  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _filter_users(self)                                                 │
+  │   Lọc _all_users_data theo keyword (username/fullname/phone/email).    │
+  │   Nếu chưa load thì trigger load trước (dùng flag _users_loaded).     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _save_user_change(self)                                             │
+  │   Lấy user_id từ hàng được chọn, gọi admin_update_user() với role     │
+  │   và is_active mới, tải lại danh sách.                                 │
+
+  ── TAB 3: QUẢN LÝ VÉ ────────────────────────────────────────────────────
+  │ def _build_tab_tickets(self)                                            │
+  │   Treeview 9 cột + toolbar (Tải lại, Tìm kiếm, Lọc trạng thái).       │
+  │   Khởi tạo _all_tickets_data=[] và _tickets_loaded=False.             │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_all_tickets(self)                                             │
+  │   Reset flag, hiện "⏳ Đang tải...", gọi admin_get_all_tickets()        │
+  │   trong thread nền.                                                    │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _apply_tickets(self, resp)                                          │
+  │   Lưu data, đặt _tickets_loaded=True, gọi _filter_tickets() để hiển  │
+  │   thị. Hiện lỗi rõ nếu ERROR.                                         │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _filter_tickets(self)                                               │
+  │   Lọc theo keyword (mã vé/tên/SĐT/tuyến) và trạng thái Combobox.     │
+  │   Hiện "ℹ️ Chưa có vé..." nếu kết quả rỗng. Dùng flag _tickets_loaded │
+  │   để tránh infinite loop khi DB trống.                                 │
+
+  ── TAB 4: ONLINE NGAY ───────────────────────────────────────────────────
+  │ def _build_tab_online(self)                                             │
+  │   Treeview danh sách online + panel "Gọi Khách Hàng" với nút 📞 Gọi   │
+  │   ngay.                                                                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_online_users(self)                                            │
+  │   Hiện "⏳ Đang tải...", gọi admin_get_online_users() trong thread.    │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _apply_online(self, resp)                                           │
+  │   Lọc bỏ chính mình, điền Treeview, cập nhật label "🟢 N người".      │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _call_selected_user(self)                                           │
+  │   Lấy username từ hàng được chọn, gọi VOICE_CALL_ANY async trong      │
+  │   thread, mở CallingDialog nếu SUCCESS.                                │
+
+  ── TAB 5: THÔNG BÁO ─────────────────────────────────────────────────────
+  │ def _build_tab_notify(self)                                             │
+  │   Form nhập tiêu đề + Text box nội dung + nút "📢 Gửi thông báo ngay". │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _send_notification(self)                                            │
+  │   Validate không rỗng, gọi admin_send_notification() async.            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_notif_sent(self, resp, title)                                   │
+  │   Cập nhật label kết quả: ✅ hoặc ❌ kèm message từ server.            │
+
+  ── TAB 6: THÊM CHUYẾN ───────────────────────────────────────────────────
+  │ def _build_tab_add_trip(self)                                           │
+  │   Form nhập: biển số, loại xe, ngày giờ khởi hành, giá vé, điểm       │
+  │   đi/đến (Combobox POPULAR_CITIES).                                    │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _create_trip(self)                                                  │
+  │   Validate, tính total_seats từ loại xe, gọi admin_add_trip() async.  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_trip_created(self, resp)                                        │
+  │   Hiển thị thông báo thành công (reload dashboard) hoặc lỗi.          │
+
+  ── TAB 7: QUẢN LÝ XE ────────────────────────────────────────────────────
+  │ def _build_tab_vehicles(self)                                           │
+  │   Treeview danh sách xe + nút Tải lại; nếu Admin thêm nút ➕ Thêm xe  │
+  │   và 🗑️ Xóa xe.                                                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_vehicles(self)                                                │
+  │   Hiện "⏳ Đang tải dữ liệu...", gọi get_vehicles() trong thread.      │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _apply_vehicles(self, resp)                                         │
+  │   Điền Treeview với danh sách xe; hiện lỗi nếu rỗng hoặc ERROR.       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _add_vehicle_dialog(self)                                           │
+  │   Dialog nhập: biển số, loại xe, số chỗ, tên tài xế, SĐT. Nút Thêm   │
+  │   chạy async, disable trong lúc gửi để tránh double-submit.           │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _delete_vehicle(self)                                               │
+  │   Xác nhận askyesno, gọi admin_delete_vehicle() và tải lại.           │
+
+  ── TAB 8: NHẬT KÝ ───────────────────────────────────────────────────────
+  │ def _build_tab_logs(self)                                               │
+  │   Combobox chọn số bản ghi (50/100/200/500) + nút Tải nhật ký +        │
+  │   Treeview 6 cột.                                                      │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_logs(self)                                                    │
+  │   Đọc limit từ Combobox, hiện "⏳ Đang tải...", gọi admin_get_logs()   │
+  │   trong thread.                                                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _apply_logs(self, resp)                                             │
+  │   Hiện lỗi hoặc điền Treeview với id, level, action, message, IP,     │
+  │   thời gian.                                                           │
+
+  ── TIỆN ÍCH ─────────────────────────────────────────────────────────────
+  │ def _kpi_card(self, parent, title, value, color) → tk.Frame            │
+  │   Tạo card KPI nhỏ: Label tiêu đề + Label giá trị to/đậm theo màu.   │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_tab_changed(self, event)                                        │
+  │   Gọi hàm load tương ứng khi chuyển tab (idx 0-7 → dashboard/users/   │
+  │   tickets/online/vehicles/logs). Tab Thông Báo và Thêm Chuyến không   │
+  │   cần tải động.                                                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _refresh_all(self)                                                  │
+  │   Đọc index tab hiện tại, gọi hàm load tương ứng qua dispatch dict.   │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_close(self)                                                     │
+  │   Gọi on_close_callback nếu có, rồi destroy().                         │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+Cuối file: AdminWindow = CustomerCareWindow  (alias tương thích ngược)
+
+================================================================================
+5. client/gui_history.py
+================================================================================
+MỤC ĐÍCH:
+  Cửa sổ Lịch sử vé của khách hàng. Hiển thị tất cả vé đã đặt, cho phép xem
+  chi tiết từng vé, hủy vé còn hạn và xuất biên lai ra file .txt.
+
+CLASS: HistoryWindow
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def __init__(self, parent, network_client)                              │
+  │   Khởi tạo Toplevel, dựng UI 2 panel, gọi _load_tickets().            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_ui(self)                                                     │
+  │   Panel trái: Listbox vé + Scrollbar. Panel phải: Text widget chi tiết │
+  │   + nút Hủy vé / Xuất biên lai.                                       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_tickets(self)                                                 │
+  │   Gọi client.get_my_tickets(), điền Listbox với mã vé và trạng thái,  │
+  │   tô màu xanh/đỏ/vàng theo CONFIRMED/CANCELLED.                       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_ticket_selected(self, event)                                    │
+  │   Khi click vào Listbox, lấy index → gọi _display_ticket(t).          │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _display_ticket(self, t)                                            │
+  │   Điền Text widget với đầy đủ thông tin vé: mã, chuyến, ghế, hành     │
+  │   khách, SĐT, email, tổng tiền, thời gian đặt, trạng thái.            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _clear_ticket_display(self)                                         │
+  │   Xóa Text widget về trạng thái rỗng, disable các nút.                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_cancel_ticket(self)                                             │
+  │   Xác nhận hủy qua askyesno, gọi client.cancel_ticket(), tải lại      │
+  │   danh sách vé.                                                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_export_receipt(self)                                            │
+  │   Mở hộp thoại lưu file (.txt), xuất toàn bộ thông tin vé ra file     │
+  │   biên lai định dạng text.                                             │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+6. client/gui_profile.py
+================================================================================
+MỤC ĐÍCH:
+  Cửa sổ Hồ sơ cá nhân và Thống kê chi tiêu của khách hàng. Cho phép xem
+  thống kê hoạt động đặt vé, cập nhật thông tin liên hệ và đổi mật khẩu.
+
+CLASS: ProfileWindow (kế thừa tk.Toplevel)
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def __init__(self, parent, network_client)                              │
+  │   Khởi tạo Toplevel, gọi _build_ui() và _load_data().                 │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_ui(self)                                                     │
+  │   Xây dựng 3 section: thống kê cá nhân (KPI), form cập nhật thông tin │
+  │   liên hệ, form đổi mật khẩu.                                         │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _load_data(self)                                                    │
+  │   Điền form từ client.user_info (họ tên, điện thoại, email); gọi      │
+  │   get_personal_stats() để lấy tổng vé đặt, tiền chi tiêu, số vé hủy. │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_save_info(self)                                                 │
+  │   Validate (không rỗng), gọi client.update_profile(), thông báo kết   │
+  │   quả.                                                                 │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _on_change_pw(self)                                                 │
+  │   Validate (không rỗng, pw mới ≥ 6 ký tự, confirm khớp), gọi          │
+  │   client.change_password(), thông báo kết quả.                         │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+7. client/network_client.py
+================================================================================
+MỤC ĐÍCH:
+  Lớp kết nối mạng phía client. Quản lý TCP socket, luồng lắng nghe bất đồng
+  bộ, heartbeat, tự động kết nối lại và cung cấp toàn bộ API methods giao tiếp
+  với server.
+
+CLASS: NetworkClient
+  ── KẾT NỐI ──────────────────────────────────────────────────────────────
+  │ def __init__(self)                                                      │
+  │   Khởi tạo: sock=None, send_lock, response_queue, token=None,          │
+  │   user_info=None, is_connected=False, tất cả danh sách callback rỗng. │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def connect(self, host, port) → (bool, str)                             │
+  │   Tạo TCP socket, settimeout(5s) để kết nối, sau đó bỏ timeout;        │
+  │   khởi động _listen_loop thread và _heartbeat_loop thread.             │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def disconnect(self, clear_reconnect=True)                              │
+  │   Đặt is_connected=False, đóng socket; nếu clear_reconnect thì tắt    │
+  │   auto-reconnect.                                                      │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _listen_loop(self)                                                  │
+  │   Thread nền: liên tục recv_msg từ server. Nếu msg có "event" key →   │
+  │   gọi callback tương ứng (seat_update/notification/user_status/        │
+  │   voice_call/VOICE_UDP_PORT). Nếu không → đẩy vào response_queue.    │
+  │   Khi thoát loop: gọi disconnect callbacks và khởi động auto-reconnect.│
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _heartbeat_loop(self)                                               │
+  │   Thread nền: gửi {action: HEARTBEAT} mỗi HEARTBEAT_INTERVAL giây     │
+  │   (30s) để server biết client còn sống.                                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _start_auto_reconnect(self)                                         │
+  │   Khởi động thread thử kết nối lại mỗi RECONNECT_INTERVAL giây (3s); │
+  │   sau khi thành công tự đăng nhập lại nếu có user_info cũ.            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def send_request(self, payload, timeout=8.0) → dict                     │
+  │   Với send_lock: flush queue cũ, thêm token vào payload nếu có, gửi   │
+  │   qua protocol.send_msg, chờ response_queue.get(timeout); trả về dict │
+  │   hoặc ERROR nếu timeout/mất kết nối.                                  │
+
+  ── API CUSTOMER ──────────────────────────────────────────────────────────
+  │ login / register / logout                                               │
+  │ update_profile / change_password / get_personal_stats                  │
+  │ get_trips / get_seats / hold_seats / release_seats                     │
+  │ confirm_booking / get_my_tickets / cancel_ticket / get_vehicles        │
+
+  ── API VOICE CALL ────────────────────────────────────────────────────────
+  │ voice_call_initiate / voice_call_response / voice_call_end             │
+
+  ── API ADMIN ─────────────────────────────────────────────────────────────
+  │ admin_get_users / admin_update_user                                     │
+  │ admin_add_vehicle / admin_update_vehicle / admin_delete_vehicle         │
+  │ admin_get_online_users / admin_send_notification                        │
+  │ admin_add_trip / admin_get_all_tickets / admin_get_stats                │
+  │ admin_get_logs / admin_backup_db / admin_restore_db                     │
+
+  ── ĐĂNG KÝ CALLBACKS ────────────────────────────────────────────────────
+  │ register_seat_update_callback(cb)    — Broadcast cập nhật ghế          │
+  │ unregister_seat_update_callback(cb)  — Hủy đăng ký                     │
+  │ register_notification_callback(cb)   — Thông báo từ Admin              │
+  │ register_user_status_callback(cb)    — User online/offline              │
+  │ register_voice_call_callback(cb)     — Sự kiện voice call              │
+  │ register_disconnect_callback(cb)     — Mất kết nối                     │
+  │ register_reconnect_callback(cb)      — Kết nối lại thành công          │
+
+================================================================================
+8. client/voice_call.py
+================================================================================
+MỤC ĐÍCH:
+  Tính năng gọi thoại 2 chiều thời gian thực qua UDP giữa 2 người dùng.
+  Kiến trúc P2P: audio capture/playback qua sounddevice, truyền raw PCM int16
+  qua UDP socket. Server chỉ làm relay để trao đổi UDP port.
+
+HÀM NGOÀI MODULE:
+  _role_badge_color(role) → str   — Trả về mã màu hex theo role.
+
+CLASS: AudioEngine
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def start(self, remote_ip, remote_port) → int                           │
+  │   Bind UDP socket, khởi động 3 threads: _capture_loop (mic→UDP),       │
+  │   _recv_loop (UDP→queue) và _playback_loop (queue→loa). Trả về port.  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def stop(self)      — Dừng 3 thread, đóng socket.                       │
+  │ def set_mute(self, muted) — Bật/tắt tắt tiếng microphone.              │
+  │ def set_volume(self, v)   — Đặt hệ số khuếch đại âm lượng (0.0-2.0).  │
+  │ def local_port          — Property trả về UDP port đang bind.           │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _capture_loop(self)                                                 │
+  │   Đọc chunk 640 frame (40ms) từ mic qua sounddevice.InputStream, thêm │
+  │   4-byte timestamp header, gửi UDP tới remote_addr (nếu port > 0).    │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _recv_loop(self)                                                    │
+  │   Nhận UDP datagram, bỏ 4-byte header, áp volume, đẩy numpy array vào │
+  │   play_queue (maxsize=20, bỏ qua nếu đầy để tránh lag).               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _playback_loop(self)                                                │
+  │   sounddevice.OutputStream với callback: lấy frame từ play_queue hoặc  │
+  │   ghi silence nếu queue rỗng (tránh glitch âm thanh).                 │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+CLASS: IncomingCallDialog
+  _build_ui()    — Avatar, tên người gọi, nút ✅ Nhận / ❌ Từ chối.
+  _tick_ring()   — Animation nhấp nháy icon 📞 đổi màu mỗi 420ms.
+  _on_accept()   — Gọi voice_call_response(accept=True), mở ActiveCallDialog.
+  _on_reject()   — Gọi voice_call_response(accept=False), đóng dialog.
+
+CLASS: CallingDialog
+  _build_ui()        — Icon 📲, tên người nhận, animation dấu chấm, nút Huỷ.
+  _tick_dots()       — Animation "Đang đổ chuông..." chạy mỗi 500ms.
+  _on_cancel()       — Gọi voice_call_end(), đóng dialog.
+  _on_voice_event()  — Nhận ACCEPTED (mở ActiveCallDialog với remote_udp_port),
+                       REJECTED hoặc ENDED (đóng dialog).
+
+CLASS: ActiveCallDialog
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def _start_audio(self)                                                  │
+  │   Nếu caller (biết remote port): start AudioEngine ngay.               │
+  │   Nếu callee: start với port=0, rồi gọi _send_udp_port_signal() để    │
+  │   relay port của mình cho caller qua TCP.                              │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _send_udp_port_signal(self)                                         │
+  │   Gửi action VOICE_UDP_PORT kèm local_udp_port lên server; server      │
+  │   relay tới caller để caller cập nhật remote_addr.                     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _build_ui(self)                                                     │
+  │   Avatar, tên, timer, Canvas sóng âm, Volume slider 0-200%, nút Mute  │
+  │   và Kết thúc.                                                         │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def _tick_timer(self)   — Cập nhật đồng hồ MM:SS mỗi 1000ms.           │
+  │ def _tick_wave(self)    — Vẽ sóng sin động trên Canvas mỗi 60ms.       │
+  │ def _toggle_mute(self)  — Toggle mute AudioEngine, đổi màu nút Mute.   │
+  │ def _on_volume_change() — Slider callback: cập nhật AudioEngine.set_volume. │
+  │ def _on_end_call(self)  — Stop AudioEngine, gửi voice_call_end, destroy. │
+  │ def _on_voice_event()   — Xử lý VOICE_CALL_ENDED (đóng dialog) và      │
+  │                           VOICE_UDP_PORT (cập nhật remote_addr).       │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+9. server/server_main.py
+================================================================================
+MỤC ĐÍCH:
+  Entry point Máy chủ TCP Socket đa luồng. Khởi tạo MySQL, quản lý kết nối
+  clients, phát sóng broadcast cập nhật ghế / thông báo / trạng thái online,
+  khởi động SeatTimerWorker kiểm tra ghế quá hạn.
+
+CLASS: BusBookingServer
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def start(self)                                                         │
+  │   Gọi db.init_db(), khởi động SeatTimerWorker, bind TCP 0.0.0.0:8888, │
+  │   vào vòng lặp accept() → spawn ClientHandler thread cho mỗi kết nối. │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def remove_client(self, client_sock)                                    │
+  │   Thread-safe: xóa socket khỏi self.clients set.                       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def broadcast_to_all(self, message: dict)                               │
+  │   Gửi message tới tất cả socket trong self.clients (dùng clients_lock).│
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def broadcast_seat_update(self, trip_id, updated_seats)                 │
+  │   Chỉ gửi tới socket đang xem trip_id này (dùng                        │
+  │   bl.get_viewers_for_trip). Đính kèm event=SEAT_UPDATE.               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def broadcast_user_status(self, username, status)                       │
+  │   Gửi event=USER_STATUS tới TẤT CẢ clients (ONLINE/OFFLINE).          │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def stop(self)                                                          │
+  │   Tắt SeatTimerWorker, đóng server socket và tất cả client sockets.   │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+10. server/client_handler.py
+================================================================================
+MỤC ĐÍCH:
+  Thread xử lý riêng cho mỗi client kết nối vào server. Nhận request JSON,
+  điều phối tới business_logic, trả về response. Xử lý sạch khi client ngắt.
+
+CLASS: ClientHandler (threading.Thread)
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def run(self)                                                           │
+  │   Vòng lặp while: protocol.recv_msg() → process_request() →            │
+  │   protocol.send_msg(). Khi recv trả về None (client đóng) → break →   │
+  │   gọi cleanup().                                                       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def process_request(self, req: dict) → dict                             │
+  │   Switch-case theo req["action"] (34 action được hỗ trợ):             │
+  │   LOGIN, REGISTER, LOGOUT, UPDATE_PROFILE, CHANGE_PASSWORD,           │
+  │   GET_TRIPS, GET_SEATS, HOLD_SEATS, RELEASE_SEATS, CONFIRM_BOOKING,   │
+  │   GET_MY_TICKETS, CANCEL_TICKET, GET_VEHICLES, HEARTBEAT,             │
+  │   VOICE_CALL_INITIATE/RESPONSE/END/ANY, VOICE_UDP_PORT,               │
+  │   ADMIN_GET_USERS, ADMIN_UPDATE_USER, ADMIN_ADD/UPDATE/DELETE_VEHICLE, │
+  │   ADMIN_ADD_TRIP, ADMIN_GET_ALL_TICKETS, ADMIN_GET_STATS,             │
+  │   ADMIN_GET_ONLINE_USERS, ADMIN_SEND_NOTIFICATION,                    │
+  │   ADMIN_GET_LOGS, ADMIN_BACKUP_DB, ADMIN_RESTORE_DB.                  │
+  │   Trả về dict {status, ...} hoặc STATUS_ERROR nếu không xác định.     │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def cleanup(self)                                                       │
+  │   Gọi bl.unregister_client_viewing(), bl.unregister_online_client(),   │
+  │   broadcast USER_STATUS OFFLINE, giải phóng tất cả ghế HOLDING của    │
+  │   token, broadcast seat_update, gọi server.remove_client(), đóng sock.│
+  └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+11. server/business_logic.py
+================================================================================
+MỤC ĐÍCH:
+  Tầng logic nghiệp vụ. Quản lý in-memory state (sessions, online users,
+  seat viewers, active calls) bảo vệ bởi threading.Lock. Là trung gian giữa
+  client_handler và database.
+
+In-memory state:
+  active_sessions     {token → user_dict}
+  online_clients_map  {socket → user_info}
+  client_viewing_map  {socket → trip_id}
+  active_calls        {call_id → call_info_dict}
+
+QUẢN LÝ SESSION:
+  create_session(user_info)     — Tạo UUID token, lưu vào active_sessions.
+  get_session(token)            — Tra cứu session theo token.
+  remove_session(token)         — Xóa session khi logout.
+
+QUẢN LÝ ONLINE USERS:
+  register_online_client(sock, user_info)   — Đăng ký socket vào online map.
+  unregister_online_client(sock)            — Xóa socket khỏi online map.
+  get_online_users_list()                   — Trả về list dict users online.
+  find_client_socket_by_username(username)  — Tìm socket theo username.
+
+QUẢN LÝ VIEWERS (Seat Broadcast):
+  register_client_viewing(sock, trip_id)   — Ghi nhận sock đang xem trip.
+  unregister_client_viewing(sock)          — Xóa sock khỏi viewer map.
+  get_viewers_for_trip(trip_id)            — Trả về list sock xem trip_id.
+
+XỬ LÝ NGHIỆP VỤ:
+  handle_login(username, password, sock)    — Xác thực, tạo session, đăng ký online.
+  handle_register(...)                      — Tạo tài khoản Customer mới.
+  handle_update_profile(token, ...)         — Cập nhật thông tin liên hệ.
+  handle_change_password(token, ...)        — Đổi mật khẩu sau xác minh.
+  handle_get_personal_stats(token)          — Trả về thống kê cá nhân.
+  handle_get_trips(...)                     — Lấy danh sách chuyến.
+  handle_get_seats(trip_id, sock)           — Lấy ghế + đăng ký viewer.
+  handle_hold_seats(trip_id, seats, token)  — Giữ ghế tạm thời.
+  handle_release_seats(...)                 — Giải phóng ghế.
+  handle_confirm_booking(...)               — Đặt vé chính thức.
+  handle_get_my_tickets(token)              — Lấy lịch sử vé.
+  handle_cancel_ticket(ticket_id, token)    — Hủy vé.
+  handle_get_vehicles()                     — Danh sách phương tiện.
+
+VOICE CALL:
+  handle_voice_call_initiate(caller_sock, target_username, token)
+    — Tạo call_id, lưu active_calls, gửi VOICE_CALL_INCOMING tới callee.
+  handle_voice_call_response(call_id, accept, callee_sock)
+    — Gửi ACCEPTED/REJECTED tới caller.
+  handle_voice_call_end(call_id, from_sock)
+    — Gửi VOICE_CALL_ENDED tới bên còn lại, xóa khỏi active_calls.
+  handle_voice_udp_port(call_id, from_sock, udp_port)
+    — Relay VOICE_UDP_PORT event tới bên kia để thiết lập P2P audio.
+
+KIỂM TRA QUYỀN:
+  is_admin(token)           — True nếu role == "Admin".
+  is_staff_or_admin(token)  — True nếu role in ("Admin", "Staff").
+
+XỬ LÝ ADMIN:
+  handle_admin_get_users / handle_admin_update_user
+  handle_admin_add/update/delete_vehicle
+  handle_admin_send_notification(token, title, message, server)
+    — Lưu notification vào DB + broadcast EVENT_NOTIFICATION qua server.broadcast_to_all.
+  handle_admin_get_logs / handle_admin_backup_db / handle_admin_restore_db
+
+================================================================================
+12. server/database.py
+================================================================================
+MỤC ĐÍCH:
+  Tầng truy cập MySQL. Tất cả query đều dùng thread lock (db_lock) để tránh
+  race condition. Kết nối autocommit=True. Tự động init schema và seed data
+  khi khởi động lần đầu.
+
+TIỆN ÍCH:
+  get_connection(with_db=True)  — Tạo kết nối pymysql mới với DictCursor.
+  hash_password(password)       — SHA-256 + salt cố định → hex string.
+  _generate_seats_for_trip(cur, trip_id, total_seats)
+    — Tạo bản ghi ghế: 34 chỗ → A01-A17+B01-B17, 24 chỗ → A01-A12+B01-B12.
+  log_action(cursor, action, message, ip, level)
+    — INSERT vào bảng system_logs; tự tạo connection nếu cursor=None.
+
+KHỞI TẠO:
+  init_db()
+    — Tạo database trainbus, tạo 7 bảng (users, vehicles, trips, seats,
+      tickets, notifications, system_logs), seed tài khoản mẫu và chuyến mẫu.
+
+NGƯỜI DÙNG:
+  get_user_by_username / create_user / update_user_profile / change_password
+  admin_get_users / admin_update_user
+
+PHƯƠNG TIỆN:
+  get_vehicles / admin_add_vehicle / admin_update_vehicle / admin_delete_vehicle
+
+CHUYẾN XE & GHẾ:
+  get_trips(from_city, to_city, date)   — SELECT kèm đếm available_seats.
+  get_trip_by_id(trip_id)
+  get_seats_by_trip(trip_id)            — Trả về dict {seat_number: status}.
+  hold_seats(trip_id, seats, token)     — UPDATE → HOLDING với timestamp.
+  release_seats(trip_id, seats, token)  — UPDATE → AVAILABLE nếu token khớp.
+  release_all_seats_for_token(token)    — Giải phóng tất cả ghế của token.
+  release_expired_seats(timeout_seconds)
+    — Quét ghế HOLDING quá hạn → AVAILABLE; trả về list (trip_id, seat_number).
+
+VÉ:
+  confirm_booking(trip_id, seats, token, passenger_info, payment_method, user_id)
+    — INSERT ticket, UPDATE seats → BOOKED, trả về booking_code.
+  get_user_tickets(user_id)     — SELECT vé kèm JOIN trips.
+  cancel_ticket(ticket_id_or_code, user_id, is_admin)
+    — UPDATE ticket → CANCELLED, UPDATE seats → AVAILABLE.
+
+THỐNG KÊ & ADMIN:
+  get_personal_stats(user_id)    — Tổng vé, tiền chi, vé hủy.
+  admin_add_trip(...)            — INSERT trip + sinh ghế.
+  admin_get_all_tickets()        — SELECT tất cả vé JOIN users+trips.
+  admin_get_stats()              — KPI: trips/tickets/revenue/users.
+  add_notification / get_notifications
+  admin_get_logs(limit)          — SELECT N logs mới nhất.
+  backup_database()              — Dump tất cả bảng ra dict.
+  restore_database(backup_data)  — TRUNCATE + re-INSERT từ dict.
+
+================================================================================
+13. server/models.py
+================================================================================
+MỤC ĐÍCH:
+  Định nghĩa 4 dataclass cho type-hint và tài liệu schema. Không có hàm def.
+
+  @dataclass User    — id, username, password_hash, fullname, phone, email, role
+  @dataclass Trip    — id, bus_number, bus_type, from_city, to_city,
+                       departure_time, price, total_seats, available_seats
+  @dataclass Seat    — id, trip_id, seat_number, status, held_by_token, held_time
+  @dataclass Ticket  — id, booking_code, trip_id, user_id, seats,
+                       passenger_name, passenger_phone, passenger_email,
+                       total_amount, payment_method, booking_time, status
+
+================================================================================
+14. server/seat_timer_worker.py
+================================================================================
+MỤC ĐÍCH:
+  Daemon thread quét và giải phóng ghế HOLDING quá hạn mỗi 2 giây. Sau khi
+  giải phóng, broadcast cập nhật ghế tới client đang xem chuyến liên quan.
+
+CLASS: SeatTimerWorker (threading.Thread, daemon=True)
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ def __init__(self, server_instance, interval=2.0)                       │
+  │   Lưu server, interval; đặt daemon=True.                               │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def run(self)                                                           │
+  │   While is_running: sleep(interval) → db.release_expired_seats() →    │
+  │   gom nhóm result theo trip_id → server.broadcast_seat_update()        │
+  │   cho từng trip_id có ghế được giải phóng.                            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ def stop(self)                                                          │
+  │   Đặt is_running = False để thoát vòng lặp.                            │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+15. common/constants.py
+================================================================================
+MỤC ĐÍCH:
+  Hằng số dùng chung giữa client và server. Không có hàm def.
+
+Nhóm hằng số:
+  ── KẾT NỐI & MYSQL ──
+  SERVER_HOST, SERVER_PORT, BUFFER_SIZE
+  HEARTBEAT_INTERVAL (30s), RECONNECT_INTERVAL (3s)
+  MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB
+
+  ── TRẠNG THÁI GHẾ ──
+  SEAT_AVAILABLE = "AVAILABLE"   (xanh lá — có thể chọn)
+  SEAT_HOLDING   = "HOLDING"     (vàng — đang giữ tạm)
+  SEAT_BOOKED    = "BOOKED"      (đỏ — đã đặt)
+
+  ── PHÂN QUYỀN ──
+  ROLE_CUSTOMER, ROLE_DRIVER, ROLE_STAFF, ROLE_ADMIN
+
+  ── ACTION CODES (Client→Server) ──
+  LOGIN, REGISTER, LOGOUT, UPDATE_PROFILE, CHANGE_PASSWORD
+  GET_TRIPS, GET_SEATS, HOLD_SEATS, RELEASE_SEATS
+  CONFIRM_BOOKING, GET_MY_TICKETS, CANCEL_TICKET
+  GET_VEHICLES, HEARTBEAT, GET_PERSONAL_STATS
+  VOICE_CALL_INITIATE/RESPONSE/END/ANY
+  ADMIN_ADD_TRIP, ADMIN_GET_ALL_TICKETS, ADMIN_GET_STATS
+  ADMIN_GET_USERS, ADMIN_UPDATE_USER
+  ADMIN_ADD/UPDATE/DELETE_VEHICLE
+  ADMIN_GET_ONLINE_USERS, ADMIN_SEND_NOTIFICATION
+  ADMIN_GET_LOGS, ADMIN_BACKUP_DB, ADMIN_RESTORE_DB
+
+  ── EVENT CODES (Server→Client broadcast) ──
+  SEAT_UPDATE, NOTIFICATION, USER_STATUS
+  VOICE_CALL_INCOMING, VOICE_CALL_ACCEPTED, VOICE_CALL_REJECTED, VOICE_CALL_ENDED
+
+  ── KHÁC ──
+  STATUS_SUCCESS = "SUCCESS", STATUS_ERROR = "ERROR"
+  HOLD_TIMEOUT_SECONDS = 180
+  POPULAR_CITIES — Danh sách 10 thành phố phổ biến
+
+================================================================================
+16. common/protocol.py
+================================================================================
+MỤC ĐÍCH:
+  Giao thức Length-Prefixed TCP Framing giải quyết sticky/fragmented packets.
+  Format: [4 bytes Big-Endian unsigned int = length] + [UTF-8 JSON payload].
+  Thêm _SafeEncoder để tự động convert datetime → string khi serialise.
+
+CLASS: _SafeEncoder (json.JSONEncoder)
+  def default(self, obj)
+    — datetime → "HH:MM:SS DD/MM/YYYY"
+    — date     → "DD/MM/YYYY"
+    — time     → "HH:MM:SS"
+    — bytes/bytearray → hex string
+
+HÀM NGOÀI MODULE:
+  send_msg(sock, data: dict) → bool
+    — json.dumps dùng _SafeEncoder, thêm 4-byte header, sock.sendall().
+    — Trả về False nếu socket error (không ném exception).
+
+  _recv_exact(sock, num_bytes) → bytes | None
+    — Đọc đúng num_bytes từ TCP stream, xử lý phân mảnh gói.
+    — Trả về None nếu kết nối đóng giữa chừng.
+
+  recv_msg(sock) → dict | None
+    — Đọc 4-byte header → length → _recv_exact(length) → json.loads().
+    — Trả về None nếu bất kỳ bước nào thất bại.
+
+================================================================================
+17. common/qr_generator.py
+================================================================================
+MỤC ĐÍCH:
+  Sinh mã QR Code thuần Python (không cần thư viện qrcode/PIL). Tạo ma trận
+  29×29 mô phỏng cấu trúc QR Version 1 và vẽ trực tiếp lên Tkinter Canvas.
+
+HÀM NGOÀI MODULE:
+  _get_qr_matrix(text: str) → list[list[int]]
+    — Tạo ma trận 29×29 gồm 0/1:
+      • 3 Finder Pattern 7×7 tại 3 góc (chuẩn QR spec)
+      • Alignment Pattern tại góc phải dưới
+      • Timing Pattern (dải ô xen kẽ)
+      • Mã hóa nội dung text qua SHA-256+MD5 hash vào vùng data
+    — Trả về ma trận boolean (1=module đen, 0=module trắng)
+
+  draw_qr_on_canvas(canvas, text, x=0, y=0, width=180, bg="#FFFFFF", fg="#000000")
+    — Gọi _get_qr_matrix(text), tính cell_size = width / 29
+    — Vẽ từng ô lên Tkinter Canvas bằng canvas.create_rectangle()
+
+================================================================================
+GHI CHÚ KIẾN TRÚC TỔNG QUAN
+================================================================================
+
+Luồng dữ liệu chính:
+  [GUI Client] ←→ [NetworkClient] ←→ [TCP Socket] ←→ [ClientHandler]
+                                                           ↓
+                                                   [business_logic]
+                                                      ↙        ↘
+                                               [database]   [broadcast]
+                                               (MySQL)       (protocol.send_msg)
+
+Phân quyền:
+  Customer / Driver → gui_booking.py    (đặt vé, gọi hỗ trợ)
+  Staff             → gui_admin.py      (xem + giới hạn thao tác)
+  Admin             → gui_admin.py      (toàn quyền)
+
+Voice Call (P2P UDP):
+  Server TCP chỉ relay 2 sự kiện: VOICE_CALL_ACCEPTED và VOICE_UDP_PORT
+  Âm thanh truyền trực tiếp Client-A ←→ UDP ←→ Client-B (sounddevice)
+
+Real-time Seat Update:
+  Server gửi broadcast_seat_update chỉ tới client đang xem cùng chuyến
+  (dùng client_viewing_map để giảm băng thông)
+
+================================================================================

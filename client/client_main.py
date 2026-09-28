@@ -1,11 +1,4 @@
-"""
-client/client_main.py - Entry Point duy nhất cho tất cả người dùng (Client GUI)
-Quản lý chuyển đổi giữa màn hình Đăng nhập, Màn hình Đặt vé (Customer/Driver)
-và Giao diện Chăm Sóc Khách Hàng (Admin/Staff).
 
-Hệ thống có 3 actor: Server — Client (khách hàng) — Admin (chăm sóc khách hàng).
-Tất cả đều đăng nhập qua cùng một cổng duy nhất này.
-"""
 
 import tkinter as tk
 from tkinter import messagebox
@@ -39,7 +32,7 @@ class ClientApplication:
         )
 
     def _on_login_success(self, client):
-        """Chỉ cho tài khoản khách hàng và tài xế dùng ứng dụng client."""
+        """Chỉ cho tài khoản khách hàng"""
         role = (self.client.user_info or {}).get("role", "")
         if role not in {"Customer", "Driver"}:
             try:

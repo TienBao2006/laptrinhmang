@@ -825,16 +825,16 @@ class BookingWindow:
         cv = tk.Canvas(qr_box, width=160, height=160,
                        bg=CLR_CARD, highlightthickness=0)
         cv.pack(side=tk.LEFT, padx=8)
-        qr_text = (f"VIETQR|VCB|0909123456|{total}"
-                   f"|TRAINBUS_{self.current_trip}_{'_'.join(seats)}")
+        qr_text = (f"VIETQR|VCB|62901062006|{total}"
+                   f"|TIENBAO{self.current_trip}_{'_'.join(seats)}")
         draw_qr_on_canvas(cv, qr_text, x=5, y=5, width=150)
 
         inf = tk.Frame(qr_box, bg=CLR_CARD)
         inf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4)
         for txt, fg, fnt in [
-            ("VIETCOMBANK", "#059669", ("Segoe UI", 9, "bold")),
-            ("STK: 0909 123 456", "#1E293B", ("Segoe UI", 10, "bold")),
-            ("Chủ TK: TRAINBUS",  "#1E293B", ("Segoe UI", 8)),
+            ("MB", "#059669", ("Segoe UI", 9, "bold")),
+            ("STK: 62901062006", "#1E293B", ("Segoe UI", 10, "bold")),
+            ("Chủ TK: TIENBAO",  "#1E293B", ("Segoe UI", 8)),
             (f"{total:,} đ".replace(",","."), CLR_RED, ("Segoe UI", 11, "bold")),
             (f"ND: VE_{self.current_trip}_{seats[0]}", "#2563EB", ("Segoe UI", 8,"bold")),
         ]:
@@ -865,7 +865,7 @@ class BookingWindow:
                     trip_id=self.current_trip,
                     seats=seats,
                     passenger_info=pdata,
-                    payment_method="VIETQR",
+                    payment_method="MB",
                     timeout=30.0,
                 )
                 dlg.after(0, lambda: on_result(resp))

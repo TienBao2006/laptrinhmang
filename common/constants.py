@@ -1,21 +1,14 @@
-"""
-common/constants.py - Định nghĩa các hằng số dùng chung giữa Client và Server
-Đáp ứng đầy đủ 34 chức năng và CSDL MySQL trainbus theo đặc tả trong result.txt
-"""
 
-# ============================================================
-# CẤU HÌNH IP MÁY CHỦ - THAY ĐỔI Ở ĐÂY KHI DEPLOY
-# ============================================================
-SERVER_HOST = "127.0.0.1"   # <-- Sửa thành IP thực của máy chủ (VD: "192.168.1.100")
-SERVER_PORT = 8888           # <-- Sửa port nếu cần (mặc định: 8888)
-# ============================================================
+SERVER_HOST = "127.0.0.1"   
+SERVER_PORT = 8888          
+
 
 # Giữ lại để tương thích code cũ
 DEFAULT_HOST = SERVER_HOST
 DEFAULT_PORT = SERVER_PORT
 BUFFER_SIZE = 4096
-HEARTBEAT_INTERVAL = 30  # Giây gửi PING/PONG một lần
-RECONNECT_INTERVAL = 3   # Giây thử kết nối lại khi mất mạng
+HEARTBEAT_INTERVAL = 30  
+RECONNECT_INTERVAL = 3 
 
 # Cấu hình MySQL Workbench
 MYSQL_HOST = "127.0.0.1"
